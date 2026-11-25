@@ -215,24 +215,19 @@ def matches_format(fmt_string: str, wanted: str) -> bool:
 COLUMNS = ["artist", "title", "format", "year", "label", "catno", "price", "currency",
            "condition", "haves", "wants", "total", "want_have_ratio", "gem",
            "for_sale_on_discogs", "only_seller", "market_low",
-           "versions", "album_total", "big_release", "format_only",
+           "versions", "widely_pressed", "format_only",
            "genres", "styles", "country", "listing_url", "release_url"]
 
 PRICE_NEUTRAL = 10  # a copy at this price gets no price boost or penalty
 
 
-def gem_score(haves: int, wants: int, price: float | None = None,
-              album_total: int | None = None) -> float:
+def gem_score(haves: int, wants: int, price: float | None = None) -> float:
     """Obscure AND wanted AND cheap.
-    Demand per owner (wants / (haves+1)), divided by log10(activity+10) so widely
+    Demand per owner (wants / (haves+1)), divided by log10(haves+wants+10) so widely
     known releases sink, then scaled by price on a log curve: $10 is neutral, cheaper
     copies get a gentle boost and pricier ones a gentle penalty.
-    'activity' is haves+wants for this pressing, or — once deep-checked — for the whole
-    album across every version, so an unloved reissue of a famous record doesn't pass
-    as obscure.
     0 wants -> 0. Examples at $10: 0h/3w 2.69 · 5h/10w 1.19 · 200h/400w 0.71 · 50h/5w 0.05"""
-    activity = max(haves + wants, album_total or 0)
-    score = wants / (haves + 1) / math.log10(activity + 10)
+    score = wants / (haves + 1) / math.log10(haves + wants + 10)
     if price is not None and price >= 0:
         score /= math.log10(price + 10) / math.log10(PRICE_NEUTRAL + 10)
     return round(score, 3)
@@ -252,26 +247,28 @@ def flags_text(it: dict) -> str:
         out.append("ONLY HERE")
     if it["format_only"] is True:
         out.append(f'{it["format_only_name"]} ONLY')
-    if it["big_release"] is True:
-        out.append("BIG")
+    if it["widely_pressed"] is True:
+        out.append("WIDELY PRESSED")
     return ", ".join(out)
 
 
 # --------------------------------------------------------------------------- albums (masters)
 
-MASTER_TTL = 7 * 24 * 3600
-MAX_VERSION_PAGES = 5   # 500 versions; anything beyond that is obviously a big release
+MASTER_TTL = 30 * 24 * 3600
+RELEASE_TTL = 7 * 24 * 3600   # for-sale counts go stale; genre/country don't
 
 
-def fetch_release_info(client: Client, release_ids: list[int]) -> dict[int, dict]:
-    """Genres, styles, release country and master (album) id. One request per release,
-    cached for good since release data rarely changes."""
+def fetch_release_info(client: Client, release_ids: list[int], fresh: bool = False) -> dict[int, dict]:
+    """One request per release: genres, styles, country, master (album) id, plus copies
+    for sale on all of Discogs and the lowest price. With fresh=True, entries older than
+    a week (or from before for-sale counts were stored) are fetched again."""
     rel_file = HERE / "cache" / "releases.json"
     cache: dict[str, dict] = json.loads(rel_file.read_text()) if rel_file.exists() else {}
-    todo = [rid for rid in release_ids if str(rid) not in cache]
+    now = time.time()
+    todo = [rid for rid in release_ids if str(rid) not in cache
+            or (fresh and now - cache[str(rid)].get("fetched", 0) > RELEASE_TTL)]
     if todo:
-        log(f"Looking up genre/country/album for {len(todo)} releases "
-            f"(about {len(todo) * client.min_interval / 60:.0f} min)…")
+        log(f"Looking up {len(todo)} releases (about {len(todo) * client.min_interval / 60:.0f} min)…")
     for i, rid in enumerate(todo, 1):
         try:
             r = client.get(f"/releases/{rid}")
@@ -280,7 +277,8 @@ def fetch_release_info(client: Client, release_ids: list[int]) -> dict[int, dict
             continue
         cache[str(rid)] = {"master_id": r.get("master_id") or None,
                            "genres": r.get("genres") or [], "styles": r.get("styles") or [],
-                           "country": r.get("country") or ""}
+                           "country": r.get("country") or "", "num_for_sale": r.get("num_for_sale"),
+                           "lowest": r.get("lowest_price"), "fetched": now}
         if i % 25 == 0 or i == len(todo):
             log(f"  releases {i}/{len(todo)}")
             rel_file.parent.mkdir(exist_ok=True)
@@ -288,60 +286,40 @@ def fetch_release_info(client: Client, release_ids: list[int]) -> dict[int, dict
     return {rid: cache[str(rid)] for rid in release_ids if str(rid) in cache}
 
 
-def fetch_albums(client: Client, release_ids: list[int]) -> dict[int, dict]:
-    """For each release: its master (album), how many versions exist, total haves+wants
-    across every version, and how many versions come in each format."""
+def fetch_albums(client: Client, info: dict[int, dict]) -> dict[int, dict]:
+    """For each release: how many versions its master (album) has, and how many come
+    in each format. One request per album, shared by all its pressings."""
     mas_file = HERE / "cache" / "masters.json"
     mas_cache: dict[str, dict] = json.loads(mas_file.read_text()) if mas_file.exists() else {}
     now = time.time()
-    info = fetch_release_info(client, release_ids)
-    rel_cache = {str(rid): v["master_id"] for rid, v in info.items()}
-
-    masters = {rel_cache[str(r)] for r in release_ids if rel_cache.get(str(r))}
+    masters = {v["master_id"] for v in info.values() if v["master_id"]}
     todo_m = [m for m in masters
               if str(m) not in mas_cache or now - mas_cache[str(m)].get("fetched", 0) > MASTER_TTL]
     if todo_m:
         log(f"Counting versions for {len(todo_m)} albums…")
     for i, mid in enumerate(todo_m, 1):
         try:
-            total, formats, versions, partial = 0, {}, 0, False
-            page = 1
-            while True:
-                data = client.get(f"/masters/{mid}/versions", {"per_page": 100, "page": page})
-                if page == 1:
-                    versions = data["pagination"]["items"]
-                    for facet in data.get("filter_facets", []):
-                        if facet.get("id") == "format":
-                            formats = {v["title"].lower(): v["count"] for v in facet["values"]}
-                for v in data.get("versions", []):
-                    c = (v.get("stats") or {}).get("community") or {}
-                    total += (c.get("in_collection") or 0) + (c.get("in_wantlist") or 0)
-                pages = data["pagination"]["pages"]
-                if page >= pages:
-                    break
-                if page >= MAX_VERSION_PAGES:
-                    partial = True
-                    break
-                page += 1
+            data = client.get(f"/masters/{mid}/versions", {"per_page": 1})
         except RuntimeError as e:
             log(f"  {e}")
             continue
-        mas_cache[str(mid)] = {"versions": versions, "total": total, "partial": partial,
-                               "formats": formats, "fetched": now}
+        formats = {}
+        for facet in data.get("filter_facets", []):
+            if facet.get("id") == "format":
+                formats = {v["title"].lower(): v["count"] for v in facet["values"]}
+        mas_cache[str(mid)] = {"versions": data["pagination"]["items"], "formats": formats, "fetched": now}
         if i % 25 == 0 or i == len(todo_m):
             log(f"  albums {i}/{len(todo_m)}")
             mas_file.parent.mkdir(exist_ok=True)
             mas_file.write_text(json.dumps(mas_cache))
 
     out = {}
-    for rid in release_ids:
-        if str(rid) not in rel_cache:
-            continue
-        mid = rel_cache[str(rid)]
+    for rid, v in info.items():
+        mid = v["master_id"]
         if not mid:
-            out[rid] = {"master_id": None, "versions": 1, "total": None, "partial": False, "formats": None}
+            out[rid] = {"versions": 1, "formats": None}
         elif str(mid) in mas_cache:
-            out[rid] = {"master_id": mid, **mas_cache[str(mid)]}
+            out[rid] = mas_cache[str(mid)]
     return out
 
 
@@ -357,40 +335,9 @@ def is_format_only(album: dict, target: str) -> bool:
     return physical > 0 and album["formats"].get(target, 0) >= physical
 
 
-# --------------------------------------------------------------------------- marketplace
-
-MARKET_TTL = 24 * 3600
-
-
-def fetch_market(client: Client, release_ids: list[int], currency: str) -> dict[int, dict]:
-    """How many copies are for sale across all of Discogs, and the lowest price."""
-    cache_file = HERE / "cache" / "market.json"
-    cache: dict[str, dict] = json.loads(cache_file.read_text()) if cache_file.exists() else {}
-    now = time.time()
-    todo = [rid for rid in release_ids
-            if str(rid) not in cache or now - cache[str(rid)].get("fetched", 0) > MARKET_TTL]
-    if todo:
-        log(f"Checking marketplace for {len(todo)} releases "
-            f"(about {len(todo) * client.min_interval / 60:.0f} min)…")
-    for i, rid in enumerate(todo, 1):
-        try:
-            data = client.get(f"/marketplace/stats/{rid}", {"curr_abbr": currency or "USD"})
-        except RuntimeError as e:
-            log(f"  {e}")
-            continue
-        low = data.get("lowest_price") or {}
-        cache[str(rid)] = {"num_for_sale": data.get("num_for_sale") or 0,
-                           "lowest": low.get("value"), "fetched": now}
-        if i % 25 == 0 or i == len(todo):
-            log(f"  marketplace {i}/{len(todo)}")
-            cache_file.parent.mkdir(exist_ok=True)
-            cache_file.write_text(json.dumps(cache))
-    return {rid: cache[str(rid)] for rid in release_ids if str(rid) in cache}
-
-
 def ratio_text(it: dict) -> str:
     if it["haves"] == 0:
-        return "∞" if it["wants"] else "–"
+        return "unowned" if it["wants"] else "–"
     return f'{it["want_have_ratio"]:.2f}'
 
 
@@ -407,7 +354,7 @@ def write_csv(rows: list[dict], path: Path) -> None:
         w.writerows(rows)
 
 
-def write_html(rows: list[dict], path: Path, title: str, big: int) -> None:
+def write_html(rows: list[dict], path: Path, title: str, wide: int) -> None:
     """Minimal report: a few columns, chip filters, click a row for details.
     Rows are embedded as JSON and drawn by JS so big shops stay fast."""
     def split(s: str) -> list[str]:   # genre names can contain commas, so ";" separates
@@ -423,8 +370,7 @@ def write_html(rows: list[dict], path: Path, title: str, big: int) -> None:
             "fs": None if r["for_sale_on_discogs"] == "" else r["for_sale_on_discogs"],
             "only": r["only_seller"] if r["only_seller"] != "" else None, "low": r["market_low"],
             "ver": None if r["versions"] == "" else r["versions"],
-            "at": None if r["album_total"] == "" else r["album_total"], "part": r["album_partial"],
-            "big": r["big_release"] if r["big_release"] != "" else None,
+            "wide": r["widely_pressed"] if r["widely_pressed"] != "" else None,
             "fo": r["format_only"] if r["format_only"] != "" else None, "fon": r["format_only_name"],
             "gen": split(r["genres"]), "sty": split(r["styles"]), "ct": r["country"], "inf": bool(r.get("_info")),
             "lu": r["listing_url"], "ru": r["release_url"],
@@ -435,8 +381,14 @@ def write_html(rows: list[dict], path: Path, title: str, big: int) -> None:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__TITLE__</title>
 <style>
-:root{--bg:#fafaf8;--fg:#1d1d1b;--dim:#8a8a85;--line:#e4e4df;--chip:#f0f0ec;--acc:#c2410c;--on:#fff}
-@media (prefers-color-scheme:dark){:root{--bg:#151514;--fg:#ececea;--dim:#8a8a85;--line:#2b2b29;--chip:#222220;--acc:#fb923c;--on:#151514}}
+:root{--bg:#fff;--fg:#000;--dim:#767676;--line:#e6e6e6;--chip:#f2f2f2;--acc:#000;--on:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#fff;--dim:#8c8c8c;--line:#262626;--chip:#1a1a1a;--acc:#fff;--on:#000}}
+.wh{display:inline-flex;align-items:center;gap:8px}
+.wh b{display:block;width:56px;height:6px;border-radius:3px;background:#16a34a;overflow:hidden}
+.wh b i{display:block;height:100%;background:#dc2626}
+.wh span{display:inline-block;width:56px;text-align:right;font-variant-numeric:tabular-nums}
+.wh span.u{color:var(--dim);font-size:12px}
+@media (prefers-color-scheme:dark){.wh b{background:#22c55e}.wh b i{background:#ef4444}}
 *{box-sizing:border-box} [hidden]{display:none!important}
 body{background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif;margin:0;padding:20px 16px;max-width:1100px;margin:auto}
 h1{font-size:20px;margin:0}
@@ -469,6 +421,7 @@ dt{color:var(--dim)} dd{margin:0}
 <div class="group"><span>Genre</span><div class="chips" id="genre"></div></div>
 <div class="chips sub" id="style"></div>
 <div class="group"><span>Country</span><div class="chips" id="country"></div></div>
+<div class="group"><span>Price</span><div class="chips" id="price"></div></div>
 <div class="group"><span>Decade</span><div class="chips" id="decade"></div></div>
 <div class="chips sub" id="year"></div>
 <table><thead><tr><th></th><th data-k="a">Artist</th><th data-k="t">Title</th><th class="n" data-k="y">Year</th><th class="n" data-k="p">Price</th>
@@ -477,15 +430,22 @@ dt{color:var(--dim)} dd{margin:0}
 <tbody id="tb"></tbody></table>
 <button id="more" hidden></button>
 <script>
-const D=__DATA__, BIG=__BIG__, NL='Not looked up';
-D.forEach((d,i)=>{d.i=i;d.rs=d.h?d.r:(d.w?1e9:-1);d.dec=d.y?Math.floor(d.y/10)*10+'s':'Unknown';d.ys=d.y?String(d.y):'Unknown';
+const D=__DATA__, WIDE=__WIDE__, NL='Not looked up';
+D.forEach((d,i)=>{d.i=i;d.rs=d.h?d.r:(d.w?1e9:-1);d.dec=d.y?Math.floor(d.y/10)*10+'s':'Unknown';d.ys=d.y?String(d.y):'Unknown';d.pk=priceBucket(d.p,d.cur);
  d.gk=d.inf?(d.gen.length?d.gen:['Unknown']):[NL];d.ck=d.inf?(d.ct||'Unknown'):NL});
-const sel={genre:new Set(),style:new Set(),country:new Set(),decade:new Set(),year:new Set()};
+const sel={genre:new Set(),style:new Set(),country:new Set(),decade:new Set(),year:new Set(),price:new Set()};
+const PRICE_EDGES = [5, 10, 20, 50];
+const SYM = {USD: "$", EUR: "€", GBP: "£", JPY: "¥", CAD: "CA$", AUD: "A$"};
+const priceLabels = cur => { const m = v => SYM[cur] ? SYM[cur] + v : v + " " + cur, E = PRICE_EDGES;
+  return [`under ${m(E[0])}`, ...E.slice(1).map((v, i) => `${m(E[i])}–${m(v)}`), `${m(E[E.length - 1])}+`]; };
+const priceBucket = (p, cur) => p == null ? "Unknown" : priceLabels(cur)[PRICE_EDGES.filter(e => p >= e).length];
+
 const TOG=[
+ ['unowned','Unowned','Nobody on Discogs owns this release yet',d=>d.h===0],
  ['only','Only seller','Nobody else on Discogs is selling this release',d=>d.only===true],
  ['fo','Format only','Every version of this album is in this format (e.g. a CD-only release)',d=>d.fo===true],
  ['scarce','Scarce','3 or fewer copies for sale on all of Discogs',d=>d.fs!=null&&d.fs<=3],
- ['hidebig','Hide well-known albums','Hide pressings of albums with '+BIG.toLocaleString()+'+ haves + wants across all versions',d=>d.big!==true],
+ ['hidewide','Hide widely pressed','Hide albums with '+WIDE+'+ versions (reissues, represses, other formats)',d=>d.wide!==true],
  ['nosingle','Hide singles','Hide singles and maxi-singles',d=>!/\b(Single|Maxi)\b/.test(d.f)],
  ['nopromo','Hide promos','Hide promos, samplers and advance copies',d=>!/\b(Promo|Smplr|Advance)\b/.test(d.f)],
 ];
@@ -499,6 +459,7 @@ function pass(d,skip){
   if(skip!=='genre'&&sel.genre.size&&!d.gk.some(x=>sel.genre.has(x))) return false;
   if(skip!=='style'&&sel.style.size&&!d.sty.some(x=>sel.style.has(x))) return false;
   if(skip!=='country'&&sel.country.size&&!sel.country.has(d.ck)) return false;
+  if(skip!=='price'&&sel.price.size&&!sel.price.has(d.pk)) return false;
   if(skip!=='year'&&sel.year.size&&!sel.year.has(d.ys)) return false;
   if(skip!=='decade'&&!sel.year.size&&sel.decade.size&&!sel.decade.has(d.dec)) return false;
   return true;
@@ -512,7 +473,7 @@ function counts(key,skip,filter){
 function chips(id,group,m,{order='count',cap=0}={}){
   let e=[...m.entries()];
   for(const v of sel[group]) if(!m.has(v)) e.push([v,0]);
-  e.sort(order==='name'?(a,b)=>a[0].localeCompare(b[0]):(a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
+  e.sort(Array.isArray(order)?(a,b)=>order.indexOf(a[0])-order.indexOf(b[0]):order==='name'?(a,b)=>a[0].localeCompare(b[0]):(a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
   const last=v=>v===NL||v==='Unknown';
   let main=e.filter(([v])=>!last(v));const tail=e.filter(([v])=>last(v));
   const over=cap?main.length-cap:0;
@@ -526,6 +487,7 @@ function render(){
   if(sel.genre.size){chips('style','style',counts('sty','style',d=>d.gk.some(x=>sel.genre.has(x))),{cap:20});$('style').hidden=false}
   else{sel.style.clear();$('style').hidden=true}
   chips('country','country',counts('ck','country'),{cap:10});
+  chips('price','price',counts('pk','price'),{order:priceLabels(D[0]?D[0].cur:'USD')});
   chips('decade','decade',counts('dec','decade'),{order:'name'});
   if(sel.decade.size){chips('year','year',counts('ys','year',d=>sel.decade.has(d.dec)),{order:'name'});$('year').hidden=false}
   else{sel.year.clear();$('year').hidden=true}
@@ -539,16 +501,17 @@ function render(){
   document.querySelectorAll('th[data-k]').forEach(th=>th.textContent=th.textContent.replace(/ [↑↓]$/,'')+(th.dataset.k===sortK?(sortD>0?' ↑':' ↓'):''));
 }
 function money(v,cur){return v==null?'–':cur==='USD'?'$'+Number(v).toFixed(2):Number(v).toFixed(2)+' '+cur}
+function whBar(d){return d.tot?`<span class="wh" title="${d.w} want · ${d.h} have"><b><i style="width:${(100*d.w/d.tot).toFixed(0)}%"></i></b>${d.h?'<span>'+d.r.toFixed(2)+'</span>':'<span class="u">unowned</span>'}</span>`:'–'}
 function ratio(d){return d.h?d.r.toFixed(2):d.w?'∞':'–'}
 function row(d){
   const o=open.has(d.i);
   let h=`<tr class="m" data-i="${d.i}"><td class="car">${o?'▾':'▸'}</td><td>${esc(d.a)}</td><td><a href="${esc(d.lu)}" target="_blank">${esc(d.t)}</a></td>
-<td class="n">${d.y||'–'}</td><td class="n">${money(d.p,d.cur)}</td><td class="n">${d.h}</td><td class="n">${d.w}</td><td class="n hide-s">${ratio(d)}</td><td class="n">${d.g.toFixed(2)}</td></tr>`;
+<td class="n">${d.y||'–'}</td><td class="n">${money(d.p,d.cur)}</td><td class="n">${d.h}</td><td class="n">${d.w}</td><td class="n hide-s">${whBar(d)}</td><td class="n">${d.g.toFixed(2)}</td></tr>`;
   if(o){
     const f=[['Format',d.f],['Label',d.l+(d.c?' · '+d.c:'')],
       ['Condition',d.cond],['Haves + wants',d.tot]];
     if(d.fs!=null) f.push(['For sale on Discogs',d.only?'only here':d.fs+(d.low!=null?' · lowest '+d.low+' '+d.cur:'')]);
-    if(d.ver!=null) f.push(['Album',d.at==null?'single version':d.at.toLocaleString()+(d.part?'+':'')+' haves + wants across '+d.ver+' versions'+(d.big?' (well known)':'')]);
+    if(d.ver!=null) f.push(['Album',d.ver===1?'single version':d.ver+' versions'+(d.wide?' (widely pressed)':'')]);
     if(d.fo!=null) f.push(['Format only',d.fo?'yes, '+d.fon+' only':'no']);
     if(d.gen.length) f.push(['Genre',d.gen.join(', ')+(d.sty.length?' · '+d.sty.join(', '):'')]);
     if(d.ct) f.push(['Country',d.ct]);
@@ -569,7 +532,7 @@ document.addEventListener('click',e=>{
 });
 render();
 </script></body></html>"""
-    page = (page.replace("__TITLE__", html.escape(title)).replace("__BIG__", str(big))
+    page = (page.replace("__TITLE__", html.escape(title)).replace("__WIDE__", str(wide))
             .replace("__DATA__", payload))
     path.write_text(page, encoding="utf-8")
 
@@ -590,10 +553,10 @@ def main() -> None:
     ap.add_argument("--sort", choices=["obscure", "gem", "ratio", "wants"], default="obscure",
                     help="obscure = lowest haves + wants first (default); gem = obscure-but-wanted first; "
                          "ratio = highest want/have first; wants = most wanted first")
-    ap.add_argument("--deep", "--market", dest="deep", type=int, default=100, metavar="N",
-                    help="deep-check the top N items in the chosen sort: copies for sale on Discogs, "
-                         "only-seller, album size across all versions, format-only "
-                         "(default 100, 0 = skip; ~3 requests per item, cached)")
+    ap.add_argument("--deep", "--market", dest="deep", default="100", metavar="N|all",
+                    help="check the top N items in the chosen sort: copies for sale on Discogs, "
+                         "only-seller, versions / widely pressed, format-only, genre, country "
+                         "(default 100, 0 = skip, all = everything; 1 request per item + 1 per album, cached)")
     ap.add_argument("--info", metavar="N|all",
                     help="look up genre, style and release country for the top N items (1 request each, "
                          "cached for good). Deep-checked items always get it. Default: 0, or 500 when "
@@ -601,8 +564,8 @@ def main() -> None:
     ap.add_argument("--genre", help="only keep these genres, comma separated (e.g. 'Rock,Electronic')")
     ap.add_argument("--style", help="only keep these styles, comma separated (e.g. 'Noise,Black Metal')")
     ap.add_argument("--country", help="only keep releases from these countries (e.g. 'US,Japan')")
-    ap.add_argument("--big", type=int, default=1000, metavar="N",
-                    help="flag an album as BIG when haves + wants across all its versions ≥ N (default 1000)")
+    ap.add_argument("--wide", type=int, default=10, metavar="N",
+                    help="call an album widely pressed when it has N or more versions (default 10)")
     ap.add_argument("--top", type=int, default=25, help="how many to print in the terminal")
     ap.add_argument("--token", default=os.environ.get("DISCOGS_TOKEN"), help="Discogs personal token")
     ap.add_argument("--refresh", action="store_true", help="ignore cached inventory")
@@ -629,9 +592,7 @@ def main() -> None:
         it["only_seller"] = ""
         it["market_low"] = None
         it["versions"] = ""
-        it["album_total"] = ""
-        it["album_partial"] = False
-        it["big_release"] = ""
+        it["widely_pressed"] = ""
         it["format_only"] = ""
         it["format_only_name"] = ""
         it["genres"] = ""
@@ -695,69 +656,56 @@ def main() -> None:
             + (f" ({unknown:,} items further down weren't looked up — raise --info or use --info all)"
                if unknown else ""))
 
-    # Deep check: market + album info for the top N. Album size lowers the gem score of
-    # pressings of big records, which reshuffles the ranking, so repeat until the top N
-    # are all checked.
-    checked_ids: set[int] = set()
-    if args.deep and items:
-        currency = items[0]["currency"]
-        est = len({i["release_id"] for i in items[: args.deep]}) * 3 * client.min_interval / 60
-        log(f"Deep-checking the top {args.deep} (first run up to ~{est:.0f} min; cached afterwards)")
-        for _ in range(10):
-            ids = list(dict.fromkeys(i["release_id"] for i in items[: args.deep]
-                                     if i["release_id"] not in checked_ids))
-            if not ids:
-                break
-            market = fetch_market(client, ids, currency)
-            albums = fetch_albums(client, ids)
-            apply_info(fetch_release_info(client, ids))   # cached by fetch_albums: no extra calls
-            checked_ids.update(ids)
-            for it in items:
-                rid = it["release_id"]
-                if rid in market:
-                    m = market[rid]
-                    it["for_sale_on_discogs"] = m["num_for_sale"]
-                    it["only_seller"] = m["num_for_sale"] <= copies_here[rid]
-                    it["market_low"] = m["lowest"]
-                if rid in albums:
-                    a = albums[rid]
-                    target = canon_format(fmt) if fmt else primary_format(it["format"])
-                    it["versions"] = a["versions"]
-                    it["album_total"] = a["total"] if a["total"] is not None else ""
-                    it["album_partial"] = a["partial"]
-                    it["big_release"] = max(a["total"] or 0, it["total"]) >= args.big
-                    it["format_only"] = is_format_only(a, target)
-                    it["format_only_name"] = {"cd": "CD", "cdr": "CDr", "vinyl": "Vinyl", "cassette": "Cassette"}.get(target, target)
-                    it["gem"] = gem_score(it["haves"], it["wants"], it["price"], a["total"])
-            items.sort(key=sort_keys[args.sort])
-    checked = sum(1 for i in items if i["release_id"] in checked_ids)
+    # Deep check: one release lookup (for sale, genre, country, album) plus one lookup per album.
+    deep_n = len(items) if args.deep == "all" else int(args.deep)
+    checked = 0
+    if deep_n and items:
+        ids = list(dict.fromkeys(i["release_id"] for i in items[:deep_n]))
+        log(f"Checking the top {deep_n:,} (first run up to ~{len(ids) * 1.6 * client.min_interval / 60:.0f} min; cached afterwards)")
+        info = fetch_release_info(client, ids, fresh=True)
+        apply_info(info)
+        albums = fetch_albums(client, info)
+        for it in items:
+            rid = it["release_id"]
+            r = info.get(rid)
+            if r and r.get("num_for_sale") is not None:
+                it["for_sale_on_discogs"] = r["num_for_sale"]
+                it["only_seller"] = r["num_for_sale"] <= copies_here[rid]
+                it["market_low"] = r["lowest"]
+            if rid in albums:
+                a = albums[rid]
+                target = canon_format(fmt) if fmt else primary_format(it["format"])
+                it["versions"] = a["versions"]
+                it["widely_pressed"] = a["versions"] >= args.wide
+                it["format_only"] = is_format_only(a, target)
+                it["format_only_name"] = {"cd": "CD", "cdr": "CDr", "vinyl": "Vinyl", "cassette": "Cassette"}.get(target, target)
+                checked += 1
 
     out_dir = HERE / "output"
     out_dir.mkdir(exist_ok=True)
     stem = f"{seller}_{slug(fmt) or 'all'}" + (f"_{slug(query)}" if query else "")
     csv_path, html_path = out_dir / f"{stem}.csv", out_dir / f"{stem}.html"
     write_csv(items, csv_path)
-    write_html(items, html_path, f"{seller} · {fmt or 'all formats'}", args.big)
+    write_html(items, html_path, f"{seller} · {fmt or 'all formats'}", args.wide)
 
     print(f"\nTop {min(args.top, len(items))} ({args.sort}):")
-    print(f"{'total':>5} {'haves':>5} {'wants':>5} {'w/h':>6} {'gem':>5} {'sale':>4} {'album':>7}  "
+    print(f"{'total':>5} {'haves':>5} {'wants':>5} {'w/h':>7} {'gem':>5} {'sale':>4} {'vers':>4}  "
           f"{'price':>7}  item")
     for it in items[: args.top]:
         sale = "" if it["for_sale_on_discogs"] == "" else str(it["for_sale_on_discogs"])
-        album = ("" if it["versions"] == "" else "1 ver" if it["album_total"] == ""
-                 else f'{it["album_total"]}{"+" if it["album_partial"] else ""}')
+        album = str(it["versions"])
         flags = flags_text(it)
-        print(f'{it["total"]:>5} {it["haves"]:>5} {it["wants"]:>5} {ratio_text(it):>6} {it["gem"]:>5.2f} '
-              f'{sale:>4} {album:>7}  {it["price"] or "":>7}  {it["artist"]} – {it["title"]} '
+        print(f'{it["total"]:>5} {it["haves"]:>5} {it["wants"]:>5} {ratio_text(it):>7} {it["gem"]:>5.2f} '
+              f'{sale:>4} {album:>4}  {it["price"] or "":>7}  {it["artist"]} – {it["title"]} '
               f'[{it["format"]}]'
               + "".join(f" · {x}" for x in (it["genres"].split(";")[0], it["country"]) if x)
               + (f"  ◆ {flags}" if flags else ""))
     if checked:
         only = sum(1 for i in items if i["only_seller"] is True)
         fo = sum(1 for i in items if i["format_only"] is True)
-        big = sum(1 for i in items if i["big_release"] is True)
-        print(f"\nOf {checked} deep-checked items: {only} sold only by {seller}, "
-              f"{fo} format-only releases, {big} pressings of big albums.")
+        wide = sum(1 for i in items if i["widely_pressed"] is True)
+        print(f"\nOf {checked} checked items: {only} sold only by {seller}, "
+              f"{fo} format-only releases, {wide} widely pressed.")
     print(f"\nWrote {csv_path}\n      {html_path}\n({client.calls} API calls)")
 
 

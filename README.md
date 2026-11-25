@@ -6,10 +6,14 @@ Finds the obscure, wanted and underpriced records in a Discogs seller's shop.
 
 Open the page, paste a seller link (CD, Vinyl, Cassette or any other format from the shop's filter), and press **Scan**. Everything runs in your browser, which talks straight to the Discogs API. There's no server and no install.
 
-- **Progress:** shown live. **Stop** keeps everything fetched so far.
-- **Deep check:** after the download, the top 100 by gem get the extra checks (only seller, format only, album size, genre, country). **Check 100 more** checks the next 100 in whatever you're currently viewing.
-- **Fill in genre & country:** looks up the rest of the current view, one request each. You can stop and resume.
-- **Saved:** everything goes into the browser's storage (IndexedDB), so re-scanning a shop and re-checking releases is instant.
+A scan runs in two parts:
+
+1. **Quick view:** the whole shop is downloaded and the table appears with Year, Price, Haves, Wants, Want/Have and Gem, plus the Unowned, Hide singles and Hide promos toggles and the price and year filters.
+2. **Full check:** every record in the format is checked for only seller, scarce, format only, widely pressed, genre and country, with a progress bar. Best gems go first, so the top of the table fills in early. The other filters appear when it's done.
+
+- **Stop** keeps everything fetched so far. **Finish the full check** picks up where it stopped, and so does scanning the same link again.
+- **Saved:** everything goes into the browser's storage (IndexedDB). Re-scanning a shop is instant, and records already checked in another format aren't checked again. For-sale counts refresh after a week.
+- **Leaving mid-scan:** the browser asks first. An interrupted shop download resumes where it left off.
 - **Shareable links:** the link to the page includes the shop link (e.g. `…/#https://www.discogs.com/seller/x/profile?format=Vinyl`), and opening it starts the scan right away.
 - **Token:** Settings has a field for your optional Discogs token. It's stored only in that browser and makes scans about 2.5× faster.
 
@@ -39,20 +43,23 @@ Requires Python 3.9+ and nothing else (standard library only). Paste any seller 
 
 ## The report
 
-The table shows Artist, Title, Year, Price, Haves, Wants, Want/Have and Gem. Click a column header to sort, and click a row to see the rest: format, label, condition, for sale, album size, format-only, genre and country.
+The table shows Artist, Title, Year, Price, Haves, Wants, Want/Have and Gem. Click a column header to sort, and click a row to see the rest: format, label, condition, for sale, versions, format-only, genre and country.
 
 Filters, all clickable chips:
 
 - **Show:**
+  - **Unowned:** nobody on Discogs owns it yet.
+  - **Hide singles / Hide promos:** based on the listing's format.
   - **Only seller:** nobody else on Discogs is selling this release.
   - **Format only:** every version of the album is in this format, e.g. a CD-only release.
   - **Scarce:** 3 or fewer copies for sale on all of Discogs.
-  - **Hide well-known albums:** hides pressings of albums with 1,000+ haves + wants across all versions, e.g. an overlooked reissue of a famous record.
+  - **Hide widely pressed:** hides albums with 10 or more versions (reissues, represses, other formats), e.g. an overlooked reissue of a famous record.
 - **Genre:** pick one or more. The styles inside them appear underneath.
 - **Country:** the release country, most common first.
-- **Decade:** pick one or more. Individual years appear underneath.
+- **Price:** pills for under $5, $5–10, $10–20, $20–50 and $50+ (in the seller's currency), or type any min and max. Clicking a second pill stretches the range to cover both, and clicking the only selected pill clears it.
+- **Year:** the same, with a pill per decade, or type any from and to year. (The command-line report still uses decade and year chips.)
 
-Chip counts update as you filter. The Show toggles and the genre/country chips only see items that were looked up (see the `--deep` and `--info` options).
+Chip counts update as you filter. In the web app, Only seller, Format only, Scarce, Hide widely pressed, Genre and Country appear once the full check is done. In the command-line report they only see items that were looked up (see the `--deep` and `--info` options).
 
 ## What the columns mean
 
@@ -61,15 +68,15 @@ Chip counts update as you filter. The Show toggles and the genre/country chips o
 | haves | Discogs users with this pressing in their collection |
 | wants | users with it on their wantlist |
 | **total** | **haves + wants for this pressing. Lower = more obscure** |
-| want/have | wants ÷ haves. Above 1 means more people want it than own it. ∞ = nobody owns it but someone wants it |
+| want/have | wants ÷ haves. Above 1 means more people want it than own it. The bar is red for wants, green for haves. "unowned" = nobody owns it but someone wants it |
 | **gem** | **obscure, wanted *and* cheap, in one number. Higher = better find** (see below) |
 | for sale | copies of this release for sale on all of Discogs, plus the lowest price. **ONLY HERE** = no other seller has it |
-| album | haves + wants across *every* version of the album (its Discogs "master"), and how many versions exist. **BIG** = 1,000 or more (change with `--big`). "single version" = this is the only one |
+| versions | how many versions the album (its Discogs "master") has. **Widely pressed** = 10 or more (change with `--wide`). "single version" = this is the only one |
 | only | **CD ONLY** (or VINYL ONLY, etc.) = every physical version of the album is in this format. Digital versions are ignored |
 | genre / style | Discogs genres, with styles underneath |
 | country | country the release came out in |
 
-Haves, wants and total are available for every item. The other columns come from extra lookups (see the `--deep` and `--info` options), so they're filled in for the top of the list only.
+Haves, wants and total come with the shop download. The other columns come from the full check (or, on the command line, `--deep` and `--info`).
 
 ### Gem score
 
@@ -80,7 +87,7 @@ gem = wants / (haves + 1)
 ```
 
 1. **Demand per owner:** wants ÷ (haves + 1).
-2. **Obscurity:** `activity` is haves + wants. For deep-checked items it's measured across the **whole album**, not just this pressing. That keeps an overlooked reissue of a famous record from passing as obscure: a Belle & Sebastian reissue with 103 haves/wants belongs to an album with 15,000+, and it drops accordingly.
+2. **Obscurity:** `activity` is haves + wants for this pressing. A quiet reissue of a famous record can still score well, so use **Hide widely pressed** to drop those.
 3. **Price:** a $10 copy is neutral. Cheaper copies get a gentle boost and pricier ones a gentle penalty: $2 ≈ ×1.21, $25 ≈ ×0.84, $50 ≈ ×0.73, $100 ≈ ×0.63. The scale uses the seller's currency.
 
 Anything with 0 wants scores 0. Examples at $10, single-version releases:
@@ -99,13 +106,13 @@ Anything with 0 wants scores 0. Examples at $10, single-version releases:
 --sort obscure|gem|ratio|wants
                     obscure = lowest total first (default), gem = highest gem first,
                     ratio = highest want/have first, wants = most wanted first
---deep N            deep-check the top N items: for sale / ONLY HERE, album size / BIG,
-                    format-only, genre, country (default 100, 0 = skip)
+--deep N|all        check the top N items: for sale / ONLY HERE, versions / widely pressed,
+                    format-only, genre, country (default 100, 0 = skip, all = everything)
 --info N|all        look up genre, style and country for the top N items (cheaper than --deep)
 --genre Rock,Jazz   only keep these genres
 --style Noise       only keep these styles
 --country US,Japan  only keep releases from these countries
---big N             album haves + wants needed to count as BIG (default 1000)
+--wide N            versions needed to count as widely pressed (default 10)
 --max-total N       only keep items with haves + wants ≤ N
 --max-haves N       only keep items owned by ≤ N people
 --min-wants N       only keep items with ≥ N wants
@@ -136,9 +143,9 @@ The script uses the official Discogs API, so it never hits Cloudflare blocks. Th
 |---|---|---|---|
 | download a 15k-item shop | 1 per 100 listings (~150) | ~6 min | ~3 min |
 | `--info N` (genre/country) | 1 per item | N × 2.5 s | N × 1 s |
-| `--deep N` | ~3 per item (more for albums with hundreds of versions) | 100 items ≈ 12 min | 100 items ≈ 5 min |
+| full check / `--deep N` | 1 per item + 1 per album (~1.6 per item) | 1,000 items ≈ 65 min | 1,000 items ≈ 27 min |
 
-Everything is cached in `cache/`: the inventory for 6 hours, the marketplace for 24 hours, album versions for 7 days, genre/country permanently. Later runs only fetch what's new, so raising `--deep` or `--info` costs only the new items.
+Everything is cached in `cache/`: the inventory for 6 hours, release lookups (for sale, genre, country) for a week, album versions for 30 days. Later runs only fetch what's new, so raising `--deep` or `--info` costs only the new items.
 
 To get a free token:
 
@@ -149,6 +156,5 @@ To get a free token:
 
 - Discogs only lets you page through the first 10,000 results of another seller's inventory. The script gets around this by walking the list from both ends, and in more sort orders for bigger shops. For huge shops, add a `q=` search to the URL to narrow it.
 - The inventory data has no genre or country. Those need one lookup per release, so genre/country filters only see the items that were looked up. Use `--info all` once to cover the whole shop. It's slow the first time (8,000 CDs ≈ 2 h with a token) but cached permanently.
-- Deep-check results lower big-album pressings' gem scores, which reshuffles the ranking. The script repeats the check until the top N are all verified, so `--deep 100` can check more than 100 items.
 - "ONLY HERE" means every copy on Discogs belongs to this seller, so it still counts if they hold two copies.
 - The API has no format filter, so the whole shop is downloaded once and filtered locally. `CD` matches `CD` and `2xCD` but not `CDr`. Use `--format CDr` for those.

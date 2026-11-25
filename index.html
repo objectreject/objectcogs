@@ -6,8 +6,14 @@
 <title>objectcogs</title>
 <meta name="description" content="Find the obscure, wanted and underpriced records in any Discogs shop.">
 <style>
-:root{--bg:#fafaf8;--fg:#1d1d1b;--dim:#8a8a85;--line:#e4e4df;--chip:#f0f0ec;--acc:#c2410c;--on:#fff}
-@media (prefers-color-scheme:dark){:root{--bg:#151514;--fg:#ececea;--dim:#8a8a85;--line:#2b2b29;--chip:#222220;--acc:#fb923c;--on:#151514}}
+:root{--bg:#fff;--fg:#000;--dim:#767676;--line:#e6e6e6;--chip:#f2f2f2;--acc:#000;--on:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#fff;--dim:#8c8c8c;--line:#262626;--chip:#1a1a1a;--acc:#fff;--on:#000}}
+.wh{display:inline-flex;align-items:center;gap:8px}
+.wh b{display:block;width:56px;height:6px;border-radius:3px;background:#16a34a;overflow:hidden}
+.wh b i{display:block;height:100%;background:#dc2626}
+.wh span{display:inline-block;width:56px;text-align:right;font-variant-numeric:tabular-nums}
+.wh span.u{color:var(--dim);font-size:12px}
+@media (prefers-color-scheme:dark){.wh b{background:#22c55e}.wh b i{background:#ef4444}}
 *{box-sizing:border-box} [hidden]{display:none!important}
 body{background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif;margin:0 auto;padding:24px 16px 60px;max-width:1100px}
 h1{font-size:20px;margin:0} h1 small{font-weight:400;color:var(--dim);font-size:14px;margin-left:6px}
@@ -24,7 +30,7 @@ details{color:var(--dim);font-size:13px} summary{cursor:pointer;width:max-conten
 #status{margin:14px 0;font-size:13px;color:var(--dim)}
 .bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:6px}
 .bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
-.err{color:var(--acc)}
+.err{font-weight:600}
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:22px}
 .actions{display:flex;gap:14px;font-size:13px;flex-wrap:wrap}
 .count{color:var(--dim);margin:2px 0 18px}
@@ -44,12 +50,16 @@ tr.m{cursor:pointer} tr.m:hover td{background:var(--chip)}
 td.car{width:18px;color:var(--dim);padding-right:0}
 tr.d td{background:var(--chip);padding:10px 8px 14px}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{color:var(--dim)} dd{margin:0}
+.pill{font-size:13px;background:var(--acc);color:var(--on);border:0;border-radius:999px;padding:4px 12px}
+.contents{display:contents}
+.rng{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--dim)}
+.rng input{width:68px;padding:3px 10px;border-radius:999px;font-size:13px}
 #more{display:block;margin:16px auto;background:var(--chip);border:0;border-radius:8px;padding:8px 16px}
 @media (max-width:640px){.hide-s{display:none}.group>span{width:auto}.group{flex-direction:column;gap:4px}.sub{margin-left:0}}
 </style>
 </head>
 <body>
-<h1>objectcogs<small>obscure records in any Discogs shop</small></h1>
+<h1>objectcogs</h1>
 
 <form id="go">
   <input id="url" type="url" required placeholder="Paste a Discogs seller link, e.g. discogs.com/seller/armageddonshop/profile?format=Vinyl">
@@ -61,9 +71,6 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{
     <label for="token">Discogs token</label>
     <input id="token" type="password" autocomplete="off" placeholder="optional, makes scans ~2.5× faster">
     <span></span><span>Free from <a href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener">discogs.com/settings/developers</a>. Stored only in this browser.</span>
-    <label for="deepn">Deep check</label>
-    <input id="deepn" type="number" min="0" step="10" value="100" style="width:90px">
-    <span></span><span>How many top items get the extra checks (only seller, format only, album size, genre, country) after each scan.</span>
   </div>
 </details>
 
@@ -73,18 +80,20 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{
   <div class="head">
     <h1 id="title"></h1>
     <div class="actions">
-      <button class="link" id="checkmore" title="Run the extra checks on the next 100 unchecked items in the current view">Check 100 more</button>
-      <button class="link" id="infoall" title="Look up genre and country for every item in the current view, one request each">Fill in genre &amp; country</button>
-      <button class="link" id="csv">Download CSV</button>
+      <button class="pill" id="resume" hidden>Finish the full check</button>
     </div>
   </div>
   <div class="count" id="count"></div>
   <div class="group"><span>Show</span><div class="chips" id="toggles"></div></div>
+  <div class="group"><span>Price</span><div class="chips"><span class="contents" id="price"></span>
+    <span class="rng"><input id="pmin" inputmode="decimal" placeholder="min" aria-label="Lowest price"> – <input id="pmax" inputmode="decimal" placeholder="max" aria-label="Highest price"></span></div></div>
+  <div class="group"><span>Year</span><div class="chips"><span class="contents" id="decade"></span>
+    <span class="rng"><input id="ymin" inputmode="numeric" placeholder="from" aria-label="From year"> – <input id="ymax" inputmode="numeric" placeholder="to" aria-label="To year"></span></div></div>
+  <div id="filters" hidden>
   <div class="group"><span>Genre</span><div class="chips" id="genre"></div></div>
   <div class="chips sub" id="style"></div>
   <div class="group"><span>Country</span><div class="chips" id="country"></div></div>
-  <div class="group"><span>Decade</span><div class="chips" id="decade"></div></div>
-  <div class="chips sub" id="year"></div>
+  </div>
   <table><thead><tr><th></th><th data-k="a">Artist</th><th data-k="t">Title</th><th class="n" data-k="y">Year</th><th class="n" data-k="p">Price</th>
   <th class="n" data-k="h">Haves</th><th class="n" data-k="w">Wants</th>
   <th class="n hide-s" data-k="rs">Want/Have</th><th class="n" data-k="g">Gem</th></tr></thead>
@@ -97,8 +106,8 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{
 // ---------------------------------------------------------------- config
 const API = "https://api.discogs.com";
 const PAGE_CAP = 100, PER_PAGE = 100;         // Discogs won't page past 100 for shops you don't own
-const INV_TTL = 6 * 3600e3, MKT_TTL = 24 * 3600e3, MAS_TTL = 7 * 24 * 3600e3;
-const MAX_VERSION_PAGES = 5, BIG = 1000, PRICE_NEUTRAL = 10;
+const INV_TTL = 6 * 3600e3, REL_TTL = 7 * 24 * 3600e3, MAS_TTL = 30 * 24 * 3600e3;
+const WIDE = 10, PRICE_NEUTRAL = 10;   // WIDE = versions for "widely pressed"
 const NL = "Not looked up";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -130,7 +139,7 @@ const ls = {get: k => { try { return localStorage.getItem(k) || ""; } catch { re
             set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }};
 
 // ---------------------------------------------------------------- Discogs API
-let lastCall = 0;
+let lastCall = 0, apiCalls = 0;
 const token = () => $("token").value.trim();
 const interval = () => (token() ? 60 / 60 : 60 / 25) * 1000 + 100;
 async function api(path, params = {}, signal) {
@@ -140,7 +149,7 @@ async function api(path, params = {}, signal) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const wait = lastCall + interval() - Date.now();
     if (wait > 0) await sleep(wait, signal);
-    lastCall = Date.now();
+    lastCall = Date.now(); apiCalls++;
     let r;
     try { r = await fetch(url, {headers, signal}); }
     catch (e) { if (e.name === "AbortError") throw e; await sleep(5000 * (attempt + 1), signal); continue; }
@@ -173,51 +182,58 @@ function parseLink(raw) {
 }
 
 // ---------------------------------------------------------------- scoring
-function gemScore(h, w, price, albumTotal) {
-  const activity = Math.max(h + w, albumTotal || 0);
-  let s = w / (h + 1) / Math.log10(activity + 10);
+function gemScore(h, w, price) {
+  let s = w / (h + 1) / Math.log10(h + w + 10);
   if (price != null && price >= 0) s /= Math.log10(price + 10) / Math.log10(PRICE_NEUTRAL + 10);
   return Math.round(s * 1000) / 1000;
 }
 
 // ---------------------------------------------------------------- state
-const S = {items: [], seller: "", fmt: "", q: "", copies: new Map(), market: {}, rel: {}, mas: {},
-           job: null, sel: {genre:new Set(), style:new Set(), country:new Set(), decade:new Set(), year:new Set()},
+const S = {items: [], seller: "", fmt: "", q: "", copies: new Map(), rel: {}, mas: {}, full: false,
+           job: null, sel: {genre:new Set(), style:new Set(), country:new Set(), },
+           range: {price: [null, null], year: [null, null]},
            tog: new Set(), open: new Set(), showAll: {}, sortK: "g", sortD: -1, limit: 100};
 
 async function loadCaches() {
-  S.market = await kget("market") || {};
   S.rel = await kget("releases") || {};
   S.mas = await kget("masters") || {};
 }
 let dirty = 0;
 async function saveCaches(force) {
   if (!force && ++dirty % 20) return;
-  await kset("market", S.market); await kset("releases", S.rel); await kset("masters", S.mas);
+  await kset("releases", S.rel); await kset("masters", S.mas);
 }
 
 const target = it => S.fmt ? canon(S.fmt) : canon(it.f.split(/[,+]/)[0] || "");
 
+const relOk = r => r && r.t && Date.now() - r.t < REL_TTL;
+const masOk = a => a && Date.now() - a.t < MAS_TTL;
+const isDone = it => { const r = S.rel[it.rid]; return relOk(r) && (r.mid == null || masOk(S.mas[r.mid])); };
+
 function apply(it) {
-  const m = S.market[it.rid];
-  if (m && Date.now() - m.t < MKT_TTL) { it.fs = m.n; it.low = m.low; it.only = m.n <= (S.copies.get(it.rid) || 1); }
   const r = S.rel[it.rid];
-  it.at = null;
   if (r) {
     it.inf = true; it.gen = r.gen; it.sty = r.sty; it.ct = r.ct;
-    if (r.mid == null) { it.ver = 1; it.big = it.tot >= BIG; it.fo = true; }
+    if (r.n != null) { it.fs = r.n; it.low = r.low; it.only = r.n <= (S.copies.get(it.rid) || 1); }
+    if (r.mid == null) { it.ver = 1; it.wide = false; it.fo = true; }
     else if (S.mas[r.mid]) {
       const a = S.mas[r.mid];
-      it.ver = a.v; it.at = a.tot; it.part = a.part; it.big = Math.max(a.tot, it.tot) >= BIG;
+      it.ver = a.v; it.wide = a.v >= WIDE;
       const physical = a.v - (a.formats.file || 0);
       it.fo = physical > 0 && (a.formats[target(it)] || 0) >= physical;
     }
   }
   it.fon = fmtLabel(target(it));
-  it.g = gemScore(it.h, it.w, it.p, it.at);
+  it.g = gemScore(it.h, it.w, it.p);
   it.gk = it.inf ? (it.gen.length ? it.gen : ["Unknown"]) : [NL];
   it.ck = it.inf ? (it.ct || "Unknown") : NL;
 }
+
+const PRICE_EDGES = [5, 10, 20, 50];
+const SYM = {USD: "$", EUR: "€", GBP: "£", JPY: "¥", CAD: "CA$", AUD: "A$"};
+const priceLabels = cur => { const m = v => SYM[cur] ? SYM[cur] + v : v + " " + cur, E = PRICE_EDGES;
+  return [`under ${m(E[0])}`, ...E.slice(1).map((v, i) => `${m(E[i])}–${m(v)}`), `${m(E[E.length - 1])}+`]; };
+const priceBucket = (p, cur) => p == null ? "Unknown" : priceLabels(cur)[PRICE_EDGES.filter(e => p >= e).length];
 
 function makeItem(l, i) {
   const r = l.release || {}, c = (r.stats || {}).community || {}, p = l.price || {};
@@ -225,9 +241,10 @@ function makeItem(l, i) {
   const it = {i, rid: r.id, a: r.artist || "", t: r.title || "", f: r.format || "", y, l: r.label || "",
     c: r.catalog_number || "", p: p.value ?? null, cur: p.currency || "USD", cond: l.condition || "",
     h, w, tot: h + w, r: h ? w / h : null, rs: h ? w / h : (w ? 1e9 : -1),
-    fs: null, only: null, low: null, ver: null, at: null, part: false, big: null, fo: null,
+    fs: null, only: null, low: null, ver: null, wide: null, fo: null,
     gen: [], sty: [], ct: "", inf: false, lu: l.uri || "", ru: "https://www.discogs.com/release/" + r.id,
     dec: y ? Math.floor(y / 10) * 10 + "s" : "Unknown", ys: y ? String(y) : "Unknown"};
+  it.pk = priceBucket(it.p, it.cur);
   apply(it);
   return it;
 }
@@ -237,9 +254,9 @@ function status(text, frac) {
   $("status").hidden = false; $("msg").innerHTML = text;
   if (frac != null) $("prog").style.width = Math.min(100, frac * 100).toFixed(1) + "%";
 }
-const mins = calls => { const m = calls * interval() / 60000; return m < 1 ? "under a minute" : `~${Math.ceil(m)} min`; };
+const mins = calls => { const m = calls * interval() / 60000; return m < 1 ? "under a minute" : m < 90 ? `~${Math.ceil(m)} min` : `~${(m / 60).toFixed(1)} h`; };
 function setBusy(b) {
-  $("scan").disabled = $("checkmore").disabled = $("infoall").disabled = b;
+  $("scan").disabled = b; $("resume").hidden ||= b;
   $("stop").hidden = !b;
 }
 async function runJob(fn) {
@@ -273,7 +290,7 @@ async function fetchInventory(signal, refresh) {
   if (part) {
     for (const l of part.listings) out.set(l.id, l);
     total = part.total; calls = part.calls;
-    status(`Picking up the download where it left off, ${out.size.toLocaleString()} of ${total.toLocaleString()} listings already saved…`, out.size / total);
+    status("Resuming…", out.size / total);
   } else {
     status("Connecting to Discogs…", 0);
     try { first = await api(url, {...base, page: 1, sort: "listed", sort_order: "asc"}, signal); }
@@ -295,7 +312,7 @@ async function fetchInventory(signal, refresh) {
           : (calls++, await api(url, {...base, page, sort, sort_order: order}, signal));
         const before = out.size; done = [pi, page];
         for (const l of data.listings || []) out.set(l.id, slim(l));
-        status(`Downloading ${esc(S.seller)}'s whole shop, ${out.size.toLocaleString()} of ${total.toLocaleString()} listings${S.fmt ? ` (Discogs can't pre-filter by format, so the ${esc(fmtLabel(canon(S.fmt)))} gets picked out after)` : ""} · ${mins(Math.max(0, est - calls))} left`, out.size / total);
+        status(`${mins(Math.max(0, est - calls))} left`, out.size / total);
         if (++unsaved >= 10) { unsaved = 0; await savePart(); }
         if (out.size >= total || (order === "desc" && page > 1 && out.size === before)) break;
       }
@@ -308,72 +325,54 @@ async function fetchInventory(signal, refresh) {
   return {listings, cachedAt: null, missed: total - out.size};
 }
 
+// One request per release: genre, style, country, its album, and copies for sale on all of Discogs.
 async function lookupRelease(it, signal) {
-  if (S.rel[it.rid]) return;
-  const r = await api(`/releases/${it.rid}`, {}, signal);
-  S.rel[it.rid] = {mid: r.master_id || null, gen: r.genres || [], sty: r.styles || [], ct: r.country || ""};
+  if (relOk(S.rel[it.rid])) return;
+  let r = {};
+  try { r = await api(`/releases/${it.rid}`, {}, signal); } catch (e) { if (e.status !== 404) throw e; }
+  S.rel[it.rid] = {mid: r.master_id || null, gen: r.genres || [], sty: r.styles || [], ct: r.country || "",
+                   n: r.num_for_sale ?? null, low: r.lowest_price ?? null, t: Date.now()};
   await saveCaches();
 }
-async function lookupMarket(it, signal) {
-  const m = S.market[it.rid];
-  if (m && Date.now() - m.t < MKT_TTL) return;
-  const d = await api(`/marketplace/stats/${it.rid}`, {curr_abbr: it.cur || "USD"}, signal);
-  S.market[it.rid] = {n: d.num_for_sale || 0, low: (d.lowest_price || {}).value ?? null, t: Date.now()};
-  await saveCaches();
-}
+// One request per album: how many versions exist, and in which formats.
 async function lookupMaster(mid, signal) {
-  const a = S.mas[mid];
-  if (a && Date.now() - a.t < MAS_TTL) return;
-  let tot = 0, formats = {}, v = 0, part = false;
-  for (let page = 1; ; page++) {
-    const d = await api(`/masters/${mid}/versions`, {per_page: 100, page}, signal);
-    if (page === 1) {
-      v = d.pagination.items;
-      for (const f of d.filter_facets || []) if (f.id === "format")
-        for (const x of f.values) formats[x.title.toLowerCase()] = x.count;
-    }
-    for (const x of d.versions || []) { const c = (x.stats || {}).community || {}; tot += (c.in_collection || 0) + (c.in_wantlist || 0); }
-    if (page >= d.pagination.pages) break;
-    if (page >= MAX_VERSION_PAGES) { part = true; break; }
-  }
-  S.mas[mid] = {v, tot, part, formats, t: Date.now()};
+  if (masOk(S.mas[mid])) return;
+  let d = {pagination: {items: 1}};
+  try { d = await api(`/masters/${mid}/versions`, {per_page: 1}, signal); } catch (e) { if (e.status !== 404) throw e; }
+  const formats = {};
+  for (const f of d.filter_facets || []) if (f.id === "format")
+    for (const x of f.values) formats[x.title.toLowerCase()] = x.count;
+  S.mas[mid] = {v: d.pagination.items, formats, t: Date.now()};
   await saveCaches();
 }
 
-// The extra checks for a list of items: market, release (genre/country/master) and album versions.
-async function deepCheck(list, signal, label) {
-  const ids = [...new Map(list.map(it => [it.rid, it])).values()];
+// Part 2: check every record in the view, best gems first, so the top fills in early.
+async function fullCheck(signal) {
+  const todo = [...new Map([...S.items].sort((a, b) => b.g - a.g).filter(it => !isDone(it)).map(it => [it.rid, it])).values()];
   const byRid = new Map(); for (const it of S.items) (byRid.get(it.rid) || byRid.set(it.rid, []).get(it.rid)).push(it);
-  let last = 0;
-  for (let k = 0; k < ids.length; k++) {
-    const it = ids[k];
-    status(`${label}: ${k + 1} of ${ids.length} · ${mins((ids.length - k) * 3)} left`, k / ids.length);
-    await lookupMarket(it, signal);
-    await lookupRelease(it, signal);
-    const mid = S.rel[it.rid]?.mid; if (mid) await lookupMaster(mid, signal);
-    for (const x of byRid.get(it.rid) || []) apply(x);
-    if (Date.now() - last > 1500) { render(); last = Date.now(); }
+  const c0 = apiCalls; let last = 0;
+  for (let k = 0; k < todo.length; k++) {
+    const perRecord = k > 20 ? (apiCalls - c0) / k : 1.6;   // a release lookup, plus an album lookup when the album is new
+    status(`Full check · ${mins((todo.length - k) * perRecord)} left`, k / todo.length);
+    await lookupRelease(todo[k], signal);
+    const mid = S.rel[todo[k].rid]?.mid; if (mid) await lookupMaster(mid, signal);
+    for (const x of byRid.get(todo[k].rid) || []) apply(x);
+    if (Date.now() - last > 3000) { render(); last = Date.now(); }
   }
+  S.full = true;
 }
-const isChecked = it => S.market[it.rid] && S.rel[it.rid] && (S.rel[it.rid].mid == null || S.mas[S.rel[it.rid].mid]);
 
 async function scan(signal, refresh) {
   const inv = await fetchInventory(signal, refresh);
   S.copies = new Map(); for (const l of inv.listings) S.copies.set(l.release.id, (S.copies.get(l.release.id) || 0) + 1);
   S.items = inv.listings.filter(l => matchesFormat(l.release.format || "", S.fmt)).map(makeItem);
-  S.open.clear(); S.limit = 100;
+  S.open.clear(); S.limit = 100; S.full = S.items.every(isDone);
   $("results").hidden = false; render();
   const note = inv.cachedAt ? ` Using the copy downloaded ${Math.round((Date.now() - inv.cachedAt) / 60000)} min ago (<button class="link" id="refresh">re-download</button>).` : "";
   const missed = inv.missed > 0 ? ` Discogs only let us reach ${S.items.length.toLocaleString()} listings; add a q= search to the link to narrow it.` : "";
-  // Deep-check the top N by gem. Album size lowers the gem of big records, which reshuffles
-  // the ranking, so repeat until the top N are all checked.
-  const n = Math.max(0, parseInt($("deepn").value) || 0);
-  for (let round = 0; round < 10 && n; round++) {
-    const top = [...S.items].sort((a, b) => b.g - a.g).slice(0, n).filter(it => !isChecked(it));
-    if (!top.length) break;
-    await deepCheck(top, signal, `Checking the top ${n}`);
-  }
-  status(`Done. ${S.items.length.toLocaleString()} ${S.fmt ? esc(fmtLabel(canon(S.fmt))) + " listings" : "listings"} out of ${inv.listings.length.toLocaleString()} in the shop.${note}${missed}`, 1);
+  status("Full check…", 0);
+  await fullCheck(signal);
+  status(`Done. ${S.items.length.toLocaleString()} ${S.fmt ? esc(fmtLabel(canon(S.fmt))) + " listings" : "listings"} out of ${inv.listings.length.toLocaleString()} in the shop, all checked.${note}${missed}`, 1);
   $("refresh")?.addEventListener("click", () => start(true));
 }
 
@@ -382,6 +381,7 @@ function start(refresh) {
   try { link = parseLink($("url").value); } catch (e) { status(`<span class="err">${esc(e.message)}</span>`); return; }
   Object.assign(S, link);
   for (const s of Object.values(S.sel)) s.clear(); S.tog.clear();
+  S.range = {price: [null, null], year: [null, null]}; syncRange();
   history.replaceState(null, "", "#" + encodeURIComponent($("url").value.trim()));
   document.title = `${S.seller} · objectcogs`;
   runJob(signal => scan(signal, refresh));
@@ -389,21 +389,47 @@ function start(refresh) {
 
 // ---------------------------------------------------------------- view
 const TOG = [
-  ["only", "Only seller", "Nobody else on Discogs is selling this release (checked items only)", d => d.only === true],
-  ["fo", "Format only", "Every version of this album is in this format, e.g. a CD-only release (checked items only)", d => d.fo === true],
-  ["scarce", "Scarce", "3 or fewer copies for sale on all of Discogs (checked items only)", d => d.fs != null && d.fs <= 3],
-  ["hidebig", "Hide well-known albums", `Hide pressings of albums with ${BIG.toLocaleString()}+ haves + wants across all versions (checked items only)`, d => d.big !== true],
+  ["unowned", "Unowned", "Nobody on Discogs owns this release yet", d => d.h === 0],
   ["nosingle", "Hide singles", "Hide singles and maxi-singles", d => !/\b(Single|Maxi)\b/.test(d.f)],
   ["nopromo", "Hide promos", "Hide promos, samplers and advance copies", d => !/\b(Promo|Smplr|Advance)\b/.test(d.f)],
+  // these need the full check, so they appear once it's done
+  ["only", "Only seller", "Nobody else on Discogs is selling this release", d => d.only === true, true],
+  ["fo", "Format only", "Every version of this album is in this format, e.g. a CD-only release", d => d.fo === true, true],
+  ["scarce", "Scarce", "3 or fewer copies for sale on all of Discogs", d => d.fs != null && d.fs <= 3, true],
+  ["hidewide", "Hide widely pressed", `Hide albums with ${WIDE}+ versions (reissues, represses, other formats)`, d => d.wide !== true, true],
 ];
+const isSet = r => r[0] != null || r[1] != null;
+const inRange = (r, v) => !isSet(r) || (v != null && (r[0] == null || v >= r[0]) && (r[1] == null || v <= r[1]));
+// presets: [label, low, high, count key]; null = open end
+const presets = {
+  price: () => { const L = priceLabels(S.items[0]?.cur || "USD"), E = [null, ...PRICE_EDGES, null];
+    return L.map((l, i) => [l, E[i], E[i + 1], l]); },
+  year: () => [...new Set(S.items.filter(d => d.y).map(d => d.dec))].sort().map(dec => [dec, +dec.slice(0, 4), +dec.slice(0, 4) + 9, dec]),
+};
+const covers = (r, lo, hi) => isSet(r) && (r[0] == null || (lo != null && lo >= r[0])) && (r[1] == null || (hi != null && hi <= r[1]));
+// click a preset: set it, add it to the current range, or (when it's the whole range) clear it
+function rangeClick(kind, i) {
+  const [, lo, hi] = presets[kind]()[i], r = S.range[kind];
+  if (!isSet(r)) S.range[kind] = [lo, hi];
+  else if (covers(r, lo, hi)) S.range[kind] = r[0] === lo && r[1] === hi ? [null, null] : [lo, hi];
+  else S.range[kind] = [r[0] == null || lo == null ? null : Math.min(r[0], lo), r[1] == null || hi == null ? null : Math.max(r[1], hi)];
+  syncRange();
+}
+const RIN = {price: ["pmin", "pmax"], year: ["ymin", "ymax"]};
+function syncRange() { for (const [k, ids] of Object.entries(RIN)) ids.forEach((id, j) => $(id).value = S.range[k][j] ?? ""); }
+function rangeChips(kind, key) {
+  const m = counts(key, kind), r = S.range[kind];
+  $(kind === "price" ? "price" : "decade").innerHTML = presets[kind]().map(([l, lo, hi, k], i) =>
+    `<button class="chip${covers(r, lo, hi) ? " on" : ""}" data-r="${kind}" data-i="${i}">${esc(l)}<i>${(m.get(k) || 0).toLocaleString()}</i></button>`).join("");
+}
 function pass(d, skip) {
   const sel = S.sel;
   for (const [k, , , fn] of TOG) if (S.tog.has(k) && !fn(d)) return false;
   if (skip !== "genre" && sel.genre.size && !d.gk.some(x => sel.genre.has(x))) return false;
   if (skip !== "style" && sel.style.size && !d.sty.some(x => sel.style.has(x))) return false;
   if (skip !== "country" && sel.country.size && !sel.country.has(d.ck)) return false;
-  if (skip !== "year" && sel.year.size && !sel.year.has(d.ys)) return false;
-  if (skip !== "decade" && !sel.year.size && sel.decade.size && !sel.decade.has(d.dec)) return false;
+  if (skip !== "price" && !inRange(S.range.price, d.p)) return false;
+  if (skip !== "year" && !inRange(S.range.year, d.y || null)) return false;
   return true;
 }
 function counts(key, skip, filter) {
@@ -417,7 +443,8 @@ function counts(key, skip, filter) {
 function chips(id, group, m, {order = "count", cap = 0} = {}) {
   const e = [...m.entries()];
   for (const v of S.sel[group]) if (!m.has(v)) e.push([v, 0]);
-  e.sort(order === "name" ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  e.sort(Array.isArray(order) ? (a, b) => order.indexOf(a[0]) - order.indexOf(b[0])
+    : order === "name" ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const last = v => v === NL || v === "Unknown";
   let main = e.filter(([v]) => !last(v)); const tail = e.filter(([v]) => last(v));
   const over = cap ? main.length - cap : 0;
@@ -436,14 +463,13 @@ function render() {
   if (!S.items.length && $("results").hidden) return;
   const sel = S.sel;
   $("title").textContent = `${S.seller} · ${S.fmt ? fmtLabel(canon(S.fmt)) : "all formats"}`;
-  $("toggles").innerHTML = TOG.map(([k, l, tip]) => `<button class="chip${S.tog.has(k) ? " on" : ""}" data-t="${k}" title="${esc(tip)}">${l}</button>`).join("");
+  $("toggles").innerHTML = TOG.filter(t => !t[4] || S.full).map(([k, l, tip]) => `<button class="chip${S.tog.has(k) ? " on" : ""}" data-t="${k}" title="${esc(tip)}">${l}</button>`).join("");
   chips("genre", "genre", counts("gk", "genre"));
   if (sel.genre.size) { chips("style", "style", counts("sty", "style", d => d.gk.some(x => sel.genre.has(x))), {cap: 20}); $("style").hidden = false; }
   else { sel.style.clear(); $("style").hidden = true; }
   chips("country", "country", counts("ck", "country"), {cap: 10});
-  chips("decade", "decade", counts("dec", "decade"), {order: "name"});
-  if (sel.decade.size) { chips("year", "year", counts("ys", "year", d => sel.decade.has(d.dec)), {order: "name"}); $("year").hidden = false; }
-  else { sel.year.clear(); $("year").hidden = true; }
+  rangeChips("price", "pk");
+  rangeChips("year", "dec");
 
   const rows = view();
   $("count").textContent = `${rows.length.toLocaleString()} of ${S.items.length.toLocaleString()} items`;
@@ -451,21 +477,24 @@ function render() {
   $("more").hidden = rows.length <= S.limit;
   $("more").textContent = `Show more (${(rows.length - S.limit).toLocaleString()} left)`;
   document.querySelectorAll("th[data-k]").forEach(th => th.textContent = th.textContent.replace(/ [↑↓]$/, "") + (th.dataset.k === S.sortK ? (S.sortD > 0 ? " ↑" : " ↓") : ""));
-  const todo = rows.filter(d => !d.inf).length;
-  $("infoall").textContent = todo ? `Fill in genre & country (${todo.toLocaleString()} left, ${mins(todo)})` : "Genre & country complete";
-  $("infoall").dataset.done = todo ? "" : "1";
+  $("filters").hidden = !S.full;
+  const left = S.full ? 0 : new Set(S.items.filter(d => !isDone(d)).map(d => d.rid)).size;
+  $("resume").hidden = !left || !!S.job;
+  $("resume").textContent = `Finish the full check (${left.toLocaleString()} left, ${mins(left * 1.6)})`;
 }
+// green = share of wants, red = share of haves; the ratio sits in a fixed-width slot so the bars line up
+const whBar = d => d.tot ? `<span class="wh" title="${d.w} want · ${d.h} have"><b><i style="width:${(100 * d.w / d.tot).toFixed(0)}%"></i></b>${d.h ? `<span>${d.r.toFixed(2)}</span>` : '<span class="u">unowned</span>'}</span>` : "–";
 const money = (v, cur) => v == null ? "–" : cur === "USD" ? "$" + Number(v).toFixed(2) : Number(v).toFixed(2) + " " + cur;
 function row(d) {
   const o = S.open.has(d.i);
   let h = `<tr class="m" data-i="${d.i}"><td class="car">${o ? "▾" : "▸"}</td><td>${esc(d.a)}</td>
 <td><a href="${esc(d.lu)}" target="_blank" rel="noopener">${esc(d.t)}</a></td><td class="n">${d.y || "–"}</td><td class="n">${money(d.p, d.cur)}</td><td class="n">${d.h}</td><td class="n">${d.w}</td>
-<td class="n hide-s">${d.h ? d.r.toFixed(2) : d.w ? "∞" : "–"}</td><td class="n">${d.g.toFixed(2)}</td></tr>`;
+<td class="n hide-s">${whBar(d)}</td><td class="n">${d.g.toFixed(2)}</td></tr>`;
   if (o) {
     const f = [["Format", d.f], ["Label", d.l + (d.c ? " · " + d.c : "")],
       ["Condition", d.cond], ["Haves + wants", d.tot]];
-    if (d.fs != null) f.push(["For sale on Discogs", d.only ? "only here" : d.fs + (d.low != null ? ` · lowest ${d.low} ${d.cur}` : "")]);
-    if (d.ver != null) f.push(["Album", d.at == null ? "single version" : `${d.at.toLocaleString()}${d.part ? "+" : ""} haves + wants across ${d.ver} versions${d.big ? " (well known)" : ""}`]);
+    if (d.fs != null) f.push(["For sale on Discogs", d.only ? "only here" : d.fs + (d.low != null ? ` · lowest ${d.low}` : "")]);
+    if (d.ver != null) f.push(["Album", d.ver === 1 ? "single version" : `${d.ver} versions${d.wide ? " (widely pressed)" : ""}`]);
     if (d.fo != null) f.push(["Format only", d.fo ? `yes, ${d.fon} only` : "no"]);
     if (d.gen.length) f.push(["Genre", d.gen.join(", ") + (d.sty.length ? " · " + d.sty.join(", ") : "")]);
     if (d.ct) f.push(["Country", d.ct]);
@@ -474,56 +503,25 @@ function row(d) {
   }
   return h;
 }
-function downloadCSV() {
-  const cols = [["artist","a"],["title","t"],["format","f"],["year","y"],["label","l"],["catno","c"],["price","p"],["currency","cur"],
-    ["condition","cond"],["haves","h"],["wants","w"],["total","tot"],["want_have_ratio","r"],["gem","g"],["for_sale_on_discogs","fs"],
-    ["only_seller","only"],["market_low","low"],["versions","ver"],["album_total","at"],["big_release","big"],["format_only","fo"],
-    ["genres","gen"],["styles","sty"],["country","ct"],["listing_url","lu"],["release_url","ru"]];
-  const cell = v => { v = Array.isArray(v) ? v.join("; ") : v ?? ""; v = String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
-  const csv = [cols.map(c => c[0]).join(",")].concat(view().map(d => cols.map(([, k]) => cell(d[k])).join(","))).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
-  a.download = `${S.seller}_${S.fmt || "all"}.csv`.toLowerCase(); a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-}
-
 // ---------------------------------------------------------------- wiring
 $("go").addEventListener("submit", e => { e.preventDefault(); start(false); });
 $("stop").addEventListener("click", () => S.job?.abort());
 // ask before a reload or closing the tab throws away a running scan
 addEventListener("beforeunload", e => { if (S.job) { e.preventDefault(); e.returnValue = ""; } });
-$("csv").addEventListener("click", downloadCSV);
-$("checkmore").addEventListener("click", () => {
-  const next = view().filter(it => !isChecked(it)).slice(0, 100);
-  if (!next.length) return status("Everything in this view is already checked.");
-  runJob(async signal => { await deepCheck(next, signal, "Checking 100 more"); status("Done.", 1); });
+for (const [k, ids] of Object.entries(RIN)) for (const id of ids) $(id).addEventListener("input", () => {
+  S.range[k] = ids.map(x => { const n = parseFloat($(x).value); return isNaN(n) ? null : n; });
+  S.limit = 100; render();
 });
-$("infoall").addEventListener("click", () => {
-  if ($("infoall").dataset.done) return;
-  const todo = view().filter(it => !it.inf);
-  const byRid = new Map(); for (const it of S.items) (byRid.get(it.rid) || byRid.set(it.rid, []).get(it.rid)).push(it);
-  runJob(async signal => {
-    let last = 0;
-    for (let k = 0; k < todo.length; k++) {
-      if (todo[k].inf) continue;
-      status(`Looking up genre & country: ${k + 1} of ${todo.length.toLocaleString()} · ${mins(todo.length - k)} left (keep this tab open; you can stop and resume any time)`, k / todo.length);
-      await lookupRelease(todo[k], signal);
-      for (const x of byRid.get(todo[k].rid) || []) apply(x);
-      if (Date.now() - last > 2000) { render(); last = Date.now(); }
-    }
-    status("Genre & country filled in.", 1);
-  });
-});
+$("resume").addEventListener("click", () => runJob(async signal => { await fullCheck(signal); status("Full check done.", 1); }));
 $("token").value = ls.get("discogs_token");
 $("token").addEventListener("change", () => ls.set("discogs_token", $("token").value.trim()));
-$("deepn").value = ls.get("deep_n") || 100;
-$("deepn").addEventListener("change", () => ls.set("deep_n", $("deepn").value));
 document.addEventListener("click", e => {
   const c = e.target.closest("button.chip,th[data-k],tr.m,#more");
   if (!c || e.target.closest("a")) return;
   if (c.id === "more") S.limit += 100;
   else if (c.dataset.t) { S.tog.has(c.dataset.t) ? S.tog.delete(c.dataset.t) : S.tog.add(c.dataset.t); S.limit = 100; }
   else if (c.dataset.more) S.showAll[c.dataset.more] = !S.showAll[c.dataset.more];
+  else if (c.dataset.r) { rangeClick(c.dataset.r, +c.dataset.i); S.limit = 100; }
   else if (c.dataset.g) { const s = S.sel[c.dataset.g], v = c.dataset.v; s.has(v) ? s.delete(v) : s.add(v); S.limit = 100; }
   else if (c.dataset.k) { const k = c.dataset.k; if (S.sortK === k) S.sortD = -S.sortD; else { S.sortK = k; S.sortD = (k === "a" || k === "t") ? 1 : -1; } }
   else if (c.classList.contains("m")) { const i = +c.dataset.i; S.open.has(i) ? S.open.delete(i) : S.open.add(i); }
