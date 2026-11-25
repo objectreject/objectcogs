@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>objectcogs</title>
+<meta name="description" content="Find the obscure, wanted and underpriced records in any Discogs shop.">
+<style>
+:root{--bg:#fafaf8;--fg:#1d1d1b;--dim:#8a8a85;--line:#e4e4df;--chip:#f0f0ec;--acc:#c2410c;--on:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#151514;--fg:#ececea;--dim:#8a8a85;--line:#2b2b29;--chip:#222220;--acc:#fb923c;--on:#151514}}
+*{box-sizing:border-box} [hidden]{display:none!important}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif;margin:0 auto;padding:24px 16px 60px;max-width:1100px}
+h1{font-size:20px;margin:0} h1 small{font-weight:400;color:var(--dim);font-size:14px;margin-left:6px}
+a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+button{font:inherit;color:inherit;cursor:pointer}
+input{font:inherit;color:inherit;background:transparent;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+form#go{display:flex;gap:8px;margin:14px 0 6px} form#go input{flex:1;min-width:0}
+.btn{background:var(--acc);color:var(--on);border:0;border-radius:8px;padding:8px 16px;font-weight:600}
+.btn:disabled{opacity:.5;cursor:default}
+.link{background:none;border:0;padding:0;color:var(--acc)} .link:disabled{color:var(--dim);cursor:default}
+details{color:var(--dim);font-size:13px} summary{cursor:pointer;width:max-content}
+.settings{display:grid;grid-template-columns:max-content 1fr;gap:8px 12px;align-items:center;margin:10px 0;max-width:560px}
+.settings input{font-size:13px;padding:6px 8px}
+#status{margin:14px 0;font-size:13px;color:var(--dim)}
+.bar{height:3px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .3s}
+.err{color:var(--acc)}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-top:22px}
+.actions{display:flex;gap:14px;font-size:13px;flex-wrap:wrap}
+.count{color:var(--dim);margin:2px 0 18px}
+.group{display:flex;gap:10px;align-items:flex-start;margin:0 0 10px}
+.group>span{width:64px;flex:none;color:var(--dim);font-size:12px;padding-top:5px;text-transform:uppercase;letter-spacing:.04em}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.sub{margin:-4px 0 10px 74px}
+button.chip{font-size:13px;background:var(--chip);border:1px solid transparent;border-radius:999px;padding:3px 10px}
+button.chip:hover{border-color:var(--line)} button.chip.on{background:var(--acc);color:var(--on)}
+button.chip i{font-style:normal;opacity:.55;margin-left:4px;font-size:12px}
+button.chip.more{background:transparent;color:var(--dim)}
+table{border-collapse:collapse;width:100%;margin-top:14px}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500;font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--fg)} th.n,td.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.m{cursor:pointer} tr.m:hover td{background:var(--chip)}
+td.car{width:18px;color:var(--dim);padding-right:0}
+tr.d td{background:var(--chip);padding:10px 8px 14px}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0} dt{color:var(--dim)} dd{margin:0}
+#more{display:block;margin:16px auto;background:var(--chip);border:0;border-radius:8px;padding:8px 16px}
+@media (max-width:640px){.hide-s{display:none}.group>span{width:auto}.group{flex-direction:column;gap:4px}.sub{margin-left:0}}
+</style>
+</head>
+<body>
+<h1>objectcogs<small>obscure records in any Discogs shop</small></h1>
+
+<form id="go">
+  <input id="url" type="url" required placeholder="Paste a Discogs seller link, e.g. discogs.com/seller/armageddonshop/profile?format=Vinyl">
+  <button class="btn" id="scan">Scan</button>
+</form>
+<details>
+  <summary>Settings</summary>
+  <div class="settings">
+    <label for="token">Discogs token</label>
+    <input id="token" type="password" autocomplete="off" placeholder="optional, makes scans ~2.5× faster">
+    <span></span><span>Free from <a href="https://www.discogs.com/settings/developers" target="_blank" rel="noopener">discogs.com/settings/developers</a>. Stored only in this browser.</span>
+    <label for="deepn">Deep check</label>
+    <input id="deepn" type="number" min="0" step="10" value="100" style="width:90px">
+    <span></span><span>How many top items get the extra checks (only seller, format only, album size, genre, country) after each scan.</span>
+  </div>
+</details>
+
+<div id="status" hidden><span id="msg"></span> <button class="link" id="stop">Stop</button><div class="bar"><i id="prog"></i></div></div>
+
+<section id="results" hidden>
+  <div class="head">
+    <h1 id="title"></h1>
+    <div class="actions">
+      <button class="link" id="checkmore" title="Run the extra checks on the next 100 unchecked items in the current view">Check 100 more</button>
+      <button class="link" id="infoall" title="Look up genre and country for every item in the current view, one request each">Fill in genre &amp; country</button>
+      <button class="link" id="csv">Download CSV</button>
+    </div>
+  </div>
+  <div class="count" id="count"></div>
+  <div class="group"><span>Show</span><div class="chips" id="toggles"></div></div>
+  <div class="group"><span>Genre</span><div class="chips" id="genre"></div></div>
+  <div class="chips sub" id="style"></div>
+  <div class="group"><span>Country</span><div class="chips" id="country"></div></div>
+  <div class="group"><span>Decade</span><div class="chips" id="decade"></div></div>
+  <div class="chips sub" id="year"></div>
+  <table><thead><tr><th></th><th data-k="a">Artist</th><th data-k="t">Title</th><th class="n" data-k="y">Year</th><th class="n" data-k="p">Price</th>
+  <th class="n" data-k="h">Haves</th><th class="n" data-k="w">Wants</th>
+  <th class="n hide-s" data-k="rs">Want/Have</th><th class="n" data-k="g">Gem</th></tr></thead>
+  <tbody id="tb"></tbody></table>
+  <button id="more" hidden></button>
+</section>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- config
+const API = "https://api.discogs.com";
+const PAGE_CAP = 100, PER_PAGE = 100;         // Discogs won't page past 100 for shops you don't own
+const INV_TTL = 6 * 3600e3, MKT_TTL = 24 * 3600e3, MAS_TTL = 7 * 24 * 3600e3;
+const MAX_VERSION_PAGES = 5, BIG = 1000, PRICE_NEUTRAL = 10;
+const NL = "Not looked up";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const sleep = (ms, signal) => new Promise((res, rej) => {
+  const t = setTimeout(res, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("stopped", "AbortError")); }, {once: true});
+});
+
+// ---------------------------------------------------------------- storage (IndexedDB, falls back to memory)
+const mem = new Map();
+const idb = new Promise(res => {
+  try {
+    const r = indexedDB.open("objectcogs", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => res(null);
+  } catch { res(null); }
+});
+async function kget(k) {
+  const d = await idb; if (!d) return mem.get(k);
+  return new Promise(res => { try { const q = d.transaction("kv").objectStore("kv").get(k);
+    q.onsuccess = () => res(q.result); q.onerror = () => res(mem.get(k)); } catch { res(mem.get(k)); } });
+}
+async function kset(k, v) {
+  mem.set(k, v); const d = await idb; if (!d) return;
+  try { d.transaction("kv", "readwrite").objectStore("kv").put(v, k); } catch {}
+}
+const ls = {get: k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+            set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }};
+
+// ---------------------------------------------------------------- Discogs API
+let lastCall = 0;
+const token = () => $("token").value.trim();
+const interval = () => (token() ? 60 / 60 : 60 / 25) * 1000 + 100;
+async function api(path, params = {}, signal) {
+  const url = new URL(API + path);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const headers = token() ? {Authorization: "Discogs token=" + token()} : {};
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const wait = lastCall + interval() - Date.now();
+    if (wait > 0) await sleep(wait, signal);
+    lastCall = Date.now();
+    let r;
+    try { r = await fetch(url, {headers, signal}); }
+    catch (e) { if (e.name === "AbortError") throw e; await sleep(5000 * (attempt + 1), signal); continue; }
+    if (r.ok) return r.json();
+    if (r.status === 429) { status(`Discogs asked us to slow down, waiting ${15 * (attempt + 1)}s…`); await sleep(15000 * (attempt + 1), signal); continue; }
+    if (r.status >= 500) { await sleep(5000 * (attempt + 1), signal); continue; }
+    let msg = ""; try { msg = (await r.json()).message || ""; } catch {}
+    if (r.status === 401) msg = "That Discogs token was rejected. Check it in Settings.";
+    const err = new Error(msg || `Discogs error ${r.status}`); err.status = r.status; throw err;
+  }
+  throw new Error("Discogs isn't responding, try again in a minute.");
+}
+
+// ---------------------------------------------------------------- formats
+const ALIAS = {cass:"cassette", cassette:"cassette", lp:"vinyl", '7"':"vinyl", '10"':"vinyl", '12"':"vinyl",
+  vinyl:"vinyl", hdcd:"cd", cd:"cd", "dvd-v":"dvd", dvd:"dvd", box:"box set", "box set":"box set"};
+const canon = t => { t = t.trim().toLowerCase().replace(/^\d+\s*x\s*/, ""); return ALIAS[t] || t; };
+const fmtTokens = f => f.split(/[,+]/).map(canon);
+const matchesFormat = (f, want) => !want || fmtTokens(f).includes(canon(want));
+const LABEL = {cd:"CD", cdr:"CDr", vinyl:"Vinyl", cassette:"Cassette", dvd:"DVD", "box set":"Box set"};
+const fmtLabel = t => LABEL[t] || t;
+
+function parseLink(raw) {
+  raw = raw.trim();
+  if (!/[/.]/.test(raw)) return {seller: raw, fmt: "", q: ""};
+  const u = new URL(/^https?:/.test(raw) ? raw : "https://" + raw);
+  const m = u.pathname.match(/\/(?:seller|user)\/([^/?#]+)/);
+  if (!m) throw new Error("That doesn't look like a Discogs seller link. It should contain /seller/<name>.");
+  return {seller: decodeURIComponent(m[1]), fmt: u.searchParams.get("format") || "", q: u.searchParams.get("q") || ""};
+}
+
+// ---------------------------------------------------------------- scoring
+function gemScore(h, w, price, albumTotal) {
+  const activity = Math.max(h + w, albumTotal || 0);
+  let s = w / (h + 1) / Math.log10(activity + 10);
+  if (price != null && price >= 0) s /= Math.log10(price + 10) / Math.log10(PRICE_NEUTRAL + 10);
+  return Math.round(s * 1000) / 1000;
+}
+
+// ---------------------------------------------------------------- state
+const S = {items: [], seller: "", fmt: "", q: "", copies: new Map(), market: {}, rel: {}, mas: {},
+           job: null, sel: {genre:new Set(), style:new Set(), country:new Set(), decade:new Set(), year:new Set()},
+           tog: new Set(), open: new Set(), showAll: {}, sortK: "g", sortD: -1, limit: 100};
+
+async function loadCaches() {
+  S.market = await kget("market") || {};
+  S.rel = await kget("releases") || {};
+  S.mas = await kget("masters") || {};
+}
+let dirty = 0;
+async function saveCaches(force) {
+  if (!force && ++dirty % 20) return;
+  await kset("market", S.market); await kset("releases", S.rel); await kset("masters", S.mas);
+}
+
+const target = it => S.fmt ? canon(S.fmt) : canon(it.f.split(/[,+]/)[0] || "");
+
+function apply(it) {
+  const m = S.market[it.rid];
+  if (m && Date.now() - m.t < MKT_TTL) { it.fs = m.n; it.low = m.low; it.only = m.n <= (S.copies.get(it.rid) || 1); }
+  const r = S.rel[it.rid];
+  it.at = null;
+  if (r) {
+    it.inf = true; it.gen = r.gen; it.sty = r.sty; it.ct = r.ct;
+    if (r.mid == null) { it.ver = 1; it.big = it.tot >= BIG; it.fo = true; }
+    else if (S.mas[r.mid]) {
+      const a = S.mas[r.mid];
+      it.ver = a.v; it.at = a.tot; it.part = a.part; it.big = Math.max(a.tot, it.tot) >= BIG;
+      const physical = a.v - (a.formats.file || 0);
+      it.fo = physical > 0 && (a.formats[target(it)] || 0) >= physical;
+    }
+  }
+  it.fon = fmtLabel(target(it));
+  it.g = gemScore(it.h, it.w, it.p, it.at);
+  it.gk = it.inf ? (it.gen.length ? it.gen : ["Unknown"]) : [NL];
+  it.ck = it.inf ? (it.ct || "Unknown") : NL;
+}
+
+function makeItem(l, i) {
+  const r = l.release || {}, c = (r.stats || {}).community || {}, p = l.price || {};
+  const h = c.in_collection || 0, w = c.in_wantlist || 0, y = r.year || 0;
+  const it = {i, rid: r.id, a: r.artist || "", t: r.title || "", f: r.format || "", y, l: r.label || "",
+    c: r.catalog_number || "", p: p.value ?? null, cur: p.currency || "USD", cond: l.condition || "",
+    h, w, tot: h + w, r: h ? w / h : null, rs: h ? w / h : (w ? 1e9 : -1),
+    fs: null, only: null, low: null, ver: null, at: null, part: false, big: null, fo: null,
+    gen: [], sty: [], ct: "", inf: false, lu: l.uri || "", ru: "https://www.discogs.com/release/" + r.id,
+    dec: y ? Math.floor(y / 10) * 10 + "s" : "Unknown", ys: y ? String(y) : "Unknown"};
+  apply(it);
+  return it;
+}
+
+// ---------------------------------------------------------------- jobs
+function status(text, frac) {
+  $("status").hidden = false; $("msg").innerHTML = text;
+  if (frac != null) $("prog").style.width = Math.min(100, frac * 100).toFixed(1) + "%";
+}
+const mins = calls => { const m = calls * interval() / 60000; return m < 1 ? "under a minute" : `~${Math.ceil(m)} min`; };
+function setBusy(b) {
+  $("scan").disabled = $("checkmore").disabled = $("infoall").disabled = b;
+  $("stop").hidden = !b;
+}
+async function runJob(fn) {
+  if (S.job) S.job.abort();
+  const ac = new AbortController(); S.job = ac; setBusy(true);
+  try { await fn(ac.signal); }
+  catch (e) {
+    if (e.name === "AbortError") status("Stopped. Everything fetched so far is saved.");
+    else status(`<span class="err">${esc(e.message)}</span>`);
+  } finally {
+    if (S.job === ac) { S.job = null; setBusy(false); }
+    await saveCaches(true); render();
+  }
+}
+
+// keep only what the report needs, so the saved copy stays small
+const slim = l => ({id: l.id, uri: l.uri, condition: l.condition, price: l.price,
+  release: {id: l.release.id, artist: l.release.artist, title: l.release.title, format: l.release.format,
+    year: l.release.year, label: l.release.label, catalog_number: l.release.catalog_number, stats: l.release.stats}});
+
+async function fetchInventory(signal, refresh) {
+  const key = `inv:${S.seller.toLowerCase()}:${S.q}`, pkey = "part:" + key;
+  const cached = await kget(key);
+  if (cached && !refresh && Date.now() - cached.t < INV_TTL) return {listings: cached.listings, cachedAt: cached.t};
+  const base = {per_page: PER_PAGE, status: "For Sale"}; if (S.q) base.q = S.q;
+  const url = `/users/${encodeURIComponent(S.seller)}/inventory`;
+  // a download that was cut off (reload, closed tab, Stop) picks up where it left off
+  let part = refresh ? null : await kget(pkey);
+  if (part && Date.now() - part.t > INV_TTL) part = null;
+  const out = new Map(); let first = null, total, calls;
+  if (part) {
+    for (const l of part.listings) out.set(l.id, l);
+    total = part.total; calls = part.calls;
+    status(`Picking up the download where it left off, ${out.size.toLocaleString()} of ${total.toLocaleString()} listings already saved…`, out.size / total);
+  } else {
+    status("Connecting to Discogs…", 0);
+    try { first = await api(url, {...base, page: 1, sort: "listed", sort_order: "asc"}, signal); }
+    catch (e) { if (e.status === 404) throw new Error(`Couldn't find a Discogs seller called “${S.seller}”.`); throw e; }
+    total = first.pagination.items; calls = 1;
+  }
+  const t0 = part ? part.t : Date.now(), reach = PAGE_CAP * PER_PAGE;
+  const est = Math.ceil(total / PER_PAGE), pages = Math.min(PAGE_CAP, est);
+  const passes = [["listed", "asc"], ["listed", "desc"]];
+  if (total > 2 * reach) passes.push(["artist","asc"],["artist","desc"],["price","asc"],["price","desc"],["item","asc"],["item","desc"]);
+  let pi = part ? part.pass : 0, page = part ? part.page : 0, unsaved = 0, done = [pi, page];
+  // done = the last page that actually arrived, so a resume never skips one
+  const savePart = () => kset(pkey, {t: t0, total, pass: done[0], page: done[1], calls, listings: [...out.values()]});
+  try {
+    for (; pi < passes.length; pi++, page = 0) {
+      const [sort, order] = passes[pi];
+      while (++page <= pages) {
+        const data = (first && pi === 0 && page === 1) ? first
+          : (calls++, await api(url, {...base, page, sort, sort_order: order}, signal));
+        const before = out.size; done = [pi, page];
+        for (const l of data.listings || []) out.set(l.id, slim(l));
+        status(`Downloading ${esc(S.seller)}'s whole shop, ${out.size.toLocaleString()} of ${total.toLocaleString()} listings${S.fmt ? ` (Discogs can't pre-filter by format, so the ${esc(fmtLabel(canon(S.fmt)))} gets picked out after)` : ""} · ${mins(Math.max(0, est - calls))} left`, out.size / total);
+        if (++unsaved >= 10) { unsaved = 0; await savePart(); }
+        if (out.size >= total || (order === "desc" && page > 1 && out.size === before)) break;
+      }
+      if (out.size >= total) break;
+    }
+  } catch (e) { if (out.size) await savePart(); throw e; }
+  const listings = [...out.values()];
+  await kset(key, {t: Date.now(), listings});
+  await kset(pkey, null);
+  return {listings, cachedAt: null, missed: total - out.size};
+}
+
+async function lookupRelease(it, signal) {
+  if (S.rel[it.rid]) return;
+  const r = await api(`/releases/${it.rid}`, {}, signal);
+  S.rel[it.rid] = {mid: r.master_id || null, gen: r.genres || [], sty: r.styles || [], ct: r.country || ""};
+  await saveCaches();
+}
+async function lookupMarket(it, signal) {
+  const m = S.market[it.rid];
+  if (m && Date.now() - m.t < MKT_TTL) return;
+  const d = await api(`/marketplace/stats/${it.rid}`, {curr_abbr: it.cur || "USD"}, signal);
+  S.market[it.rid] = {n: d.num_for_sale || 0, low: (d.lowest_price || {}).value ?? null, t: Date.now()};
+  await saveCaches();
+}
+async function lookupMaster(mid, signal) {
+  const a = S.mas[mid];
+  if (a && Date.now() - a.t < MAS_TTL) return;
+  let tot = 0, formats = {}, v = 0, part = false;
+  for (let page = 1; ; page++) {
+    const d = await api(`/masters/${mid}/versions`, {per_page: 100, page}, signal);
+    if (page === 1) {
+      v = d.pagination.items;
+      for (const f of d.filter_facets || []) if (f.id === "format")
+        for (const x of f.values) formats[x.title.toLowerCase()] = x.count;
+    }
+    for (const x of d.versions || []) { const c = (x.stats || {}).community || {}; tot += (c.in_collection || 0) + (c.in_wantlist || 0); }
+    if (page >= d.pagination.pages) break;
+    if (page >= MAX_VERSION_PAGES) { part = true; break; }
+  }
+  S.mas[mid] = {v, tot, part, formats, t: Date.now()};
+  await saveCaches();
+}
+
+// The extra checks for a list of items: market, release (genre/country/master) and album versions.
+async function deepCheck(list, signal, label) {
+  const ids = [...new Map(list.map(it => [it.rid, it])).values()];
+  const byRid = new Map(); for (const it of S.items) (byRid.get(it.rid) || byRid.set(it.rid, []).get(it.rid)).push(it);
+  let last = 0;
+  for (let k = 0; k < ids.length; k++) {
+    const it = ids[k];
+    status(`${label}: ${k + 1} of ${ids.length} · ${mins((ids.length - k) * 3)} left`, k / ids.length);
+    await lookupMarket(it, signal);
+    await lookupRelease(it, signal);
+    const mid = S.rel[it.rid]?.mid; if (mid) await lookupMaster(mid, signal);
+    for (const x of byRid.get(it.rid) || []) apply(x);
+    if (Date.now() - last > 1500) { render(); last = Date.now(); }
+  }
+}
+const isChecked = it => S.market[it.rid] && S.rel[it.rid] && (S.rel[it.rid].mid == null || S.mas[S.rel[it.rid].mid]);
+
+async function scan(signal, refresh) {
+  const inv = await fetchInventory(signal, refresh);
+  S.copies = new Map(); for (const l of inv.listings) S.copies.set(l.release.id, (S.copies.get(l.release.id) || 0) + 1);
+  S.items = inv.listings.filter(l => matchesFormat(l.release.format || "", S.fmt)).map(makeItem);
+  S.open.clear(); S.limit = 100;
+  $("results").hidden = false; render();
+  const note = inv.cachedAt ? ` Using the copy downloaded ${Math.round((Date.now() - inv.cachedAt) / 60000)} min ago (<button class="link" id="refresh">re-download</button>).` : "";
+  const missed = inv.missed > 0 ? ` Discogs only let us reach ${S.items.length.toLocaleString()} listings; add a q= search to the link to narrow it.` : "";
+  // Deep-check the top N by gem. Album size lowers the gem of big records, which reshuffles
+  // the ranking, so repeat until the top N are all checked.
+  const n = Math.max(0, parseInt($("deepn").value) || 0);
+  for (let round = 0; round < 10 && n; round++) {
+    const top = [...S.items].sort((a, b) => b.g - a.g).slice(0, n).filter(it => !isChecked(it));
+    if (!top.length) break;
+    await deepCheck(top, signal, `Checking the top ${n}`);
+  }
+  status(`Done. ${S.items.length.toLocaleString()} ${S.fmt ? esc(fmtLabel(canon(S.fmt))) + " listings" : "listings"} out of ${inv.listings.length.toLocaleString()} in the shop.${note}${missed}`, 1);
+  $("refresh")?.addEventListener("click", () => start(true));
+}
+
+function start(refresh) {
+  let link;
+  try { link = parseLink($("url").value); } catch (e) { status(`<span class="err">${esc(e.message)}</span>`); return; }
+  Object.assign(S, link);
+  for (const s of Object.values(S.sel)) s.clear(); S.tog.clear();
+  history.replaceState(null, "", "#" + encodeURIComponent($("url").value.trim()));
+  document.title = `${S.seller} · objectcogs`;
+  runJob(signal => scan(signal, refresh));
+}
+
+// ---------------------------------------------------------------- view
+const TOG = [
+  ["only", "Only seller", "Nobody else on Discogs is selling this release (checked items only)", d => d.only === true],
+  ["fo", "Format only", "Every version of this album is in this format, e.g. a CD-only release (checked items only)", d => d.fo === true],
+  ["scarce", "Scarce", "3 or fewer copies for sale on all of Discogs (checked items only)", d => d.fs != null && d.fs <= 3],
+  ["hidebig", "Hide well-known albums", `Hide pressings of albums with ${BIG.toLocaleString()}+ haves + wants across all versions (checked items only)`, d => d.big !== true],
+  ["nosingle", "Hide singles", "Hide singles and maxi-singles", d => !/\b(Single|Maxi)\b/.test(d.f)],
+  ["nopromo", "Hide promos", "Hide promos, samplers and advance copies", d => !/\b(Promo|Smplr|Advance)\b/.test(d.f)],
+];
+function pass(d, skip) {
+  const sel = S.sel;
+  for (const [k, , , fn] of TOG) if (S.tog.has(k) && !fn(d)) return false;
+  if (skip !== "genre" && sel.genre.size && !d.gk.some(x => sel.genre.has(x))) return false;
+  if (skip !== "style" && sel.style.size && !d.sty.some(x => sel.style.has(x))) return false;
+  if (skip !== "country" && sel.country.size && !sel.country.has(d.ck)) return false;
+  if (skip !== "year" && sel.year.size && !sel.year.has(d.ys)) return false;
+  if (skip !== "decade" && !sel.year.size && sel.decade.size && !sel.decade.has(d.dec)) return false;
+  return true;
+}
+function counts(key, skip, filter) {
+  const m = new Map();
+  for (const d of S.items) {
+    if (!pass(d, skip) || (filter && !filter(d))) continue;
+    for (const v of [].concat(d[key])) if (v) m.set(v, (m.get(v) || 0) + 1);
+  }
+  return m;
+}
+function chips(id, group, m, {order = "count", cap = 0} = {}) {
+  const e = [...m.entries()];
+  for (const v of S.sel[group]) if (!m.has(v)) e.push([v, 0]);
+  e.sort(order === "name" ? (a, b) => a[0].localeCompare(b[0]) : (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const last = v => v === NL || v === "Unknown";
+  let main = e.filter(([v]) => !last(v)); const tail = e.filter(([v]) => last(v));
+  const over = cap ? main.length - cap : 0;
+  if (over > 0 && !S.showAll[group]) main = main.slice(0, cap);
+  $(id).innerHTML = main.concat(tail).map(([v, n]) =>
+    `<button class="chip${S.sel[group].has(v) ? " on" : ""}" data-g="${group}" data-v="${esc(v)}">${esc(v)}<i>${n.toLocaleString()}</i></button>`).join("")
+    + (over > 0 ? `<button class="chip more" data-more="${group}">${S.showAll[group] ? "fewer" : "+" + over + " more"}</button>` : "");
+}
+const view = () => {
+  const rows = S.items.filter(d => pass(d));
+  const k = S.sortK, dir = S.sortD;
+  rows.sort((a, b) => { const x = a[k], y = b[k]; return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir; });
+  return rows;
+};
+function render() {
+  if (!S.items.length && $("results").hidden) return;
+  const sel = S.sel;
+  $("title").textContent = `${S.seller} · ${S.fmt ? fmtLabel(canon(S.fmt)) : "all formats"}`;
+  $("toggles").innerHTML = TOG.map(([k, l, tip]) => `<button class="chip${S.tog.has(k) ? " on" : ""}" data-t="${k}" title="${esc(tip)}">${l}</button>`).join("");
+  chips("genre", "genre", counts("gk", "genre"));
+  if (sel.genre.size) { chips("style", "style", counts("sty", "style", d => d.gk.some(x => sel.genre.has(x))), {cap: 20}); $("style").hidden = false; }
+  else { sel.style.clear(); $("style").hidden = true; }
+  chips("country", "country", counts("ck", "country"), {cap: 10});
+  chips("decade", "decade", counts("dec", "decade"), {order: "name"});
+  if (sel.decade.size) { chips("year", "year", counts("ys", "year", d => sel.decade.has(d.dec)), {order: "name"}); $("year").hidden = false; }
+  else { sel.year.clear(); $("year").hidden = true; }
+
+  const rows = view();
+  $("count").textContent = `${rows.length.toLocaleString()} of ${S.items.length.toLocaleString()} items`;
+  $("tb").innerHTML = rows.slice(0, S.limit).map(row).join("");
+  $("more").hidden = rows.length <= S.limit;
+  $("more").textContent = `Show more (${(rows.length - S.limit).toLocaleString()} left)`;
+  document.querySelectorAll("th[data-k]").forEach(th => th.textContent = th.textContent.replace(/ [↑↓]$/, "") + (th.dataset.k === S.sortK ? (S.sortD > 0 ? " ↑" : " ↓") : ""));
+  const todo = rows.filter(d => !d.inf).length;
+  $("infoall").textContent = todo ? `Fill in genre & country (${todo.toLocaleString()} left, ${mins(todo)})` : "Genre & country complete";
+  $("infoall").dataset.done = todo ? "" : "1";
+}
+const money = (v, cur) => v == null ? "–" : cur === "USD" ? "$" + Number(v).toFixed(2) : Number(v).toFixed(2) + " " + cur;
+function row(d) {
+  const o = S.open.has(d.i);
+  let h = `<tr class="m" data-i="${d.i}"><td class="car">${o ? "▾" : "▸"}</td><td>${esc(d.a)}</td>
+<td><a href="${esc(d.lu)}" target="_blank" rel="noopener">${esc(d.t)}</a></td><td class="n">${d.y || "–"}</td><td class="n">${money(d.p, d.cur)}</td><td class="n">${d.h}</td><td class="n">${d.w}</td>
+<td class="n hide-s">${d.h ? d.r.toFixed(2) : d.w ? "∞" : "–"}</td><td class="n">${d.g.toFixed(2)}</td></tr>`;
+  if (o) {
+    const f = [["Format", d.f], ["Label", d.l + (d.c ? " · " + d.c : "")],
+      ["Condition", d.cond], ["Haves + wants", d.tot]];
+    if (d.fs != null) f.push(["For sale on Discogs", d.only ? "only here" : d.fs + (d.low != null ? ` · lowest ${d.low} ${d.cur}` : "")]);
+    if (d.ver != null) f.push(["Album", d.at == null ? "single version" : `${d.at.toLocaleString()}${d.part ? "+" : ""} haves + wants across ${d.ver} versions${d.big ? " (well known)" : ""}`]);
+    if (d.fo != null) f.push(["Format only", d.fo ? `yes, ${d.fon} only` : "no"]);
+    if (d.gen.length) f.push(["Genre", d.gen.join(", ") + (d.sty.length ? " · " + d.sty.join(", ") : "")]);
+    if (d.ct) f.push(["Country", d.ct]);
+    h += `<tr class="d"><td></td><td colspan="8"><dl>${f.filter(x => x[1] !== "").map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}
+<dt>Links</dt><dd><a href="${esc(d.lu)}" target="_blank" rel="noopener">listing</a> · <a href="${esc(d.ru)}" target="_blank" rel="noopener">release</a></dd></dl></td></tr>`;
+  }
+  return h;
+}
+function downloadCSV() {
+  const cols = [["artist","a"],["title","t"],["format","f"],["year","y"],["label","l"],["catno","c"],["price","p"],["currency","cur"],
+    ["condition","cond"],["haves","h"],["wants","w"],["total","tot"],["want_have_ratio","r"],["gem","g"],["for_sale_on_discogs","fs"],
+    ["only_seller","only"],["market_low","low"],["versions","ver"],["album_total","at"],["big_release","big"],["format_only","fo"],
+    ["genres","gen"],["styles","sty"],["country","ct"],["listing_url","lu"],["release_url","ru"]];
+  const cell = v => { v = Array.isArray(v) ? v.join("; ") : v ?? ""; v = String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+  const csv = [cols.map(c => c[0]).join(",")].concat(view().map(d => cols.map(([, k]) => cell(d[k])).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], {type: "text/csv"}));
+  a.download = `${S.seller}_${S.fmt || "all"}.csv`.toLowerCase(); a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------------------------------------------------------------- wiring
+$("go").addEventListener("submit", e => { e.preventDefault(); start(false); });
+$("stop").addEventListener("click", () => S.job?.abort());
+// ask before a reload or closing the tab throws away a running scan
+addEventListener("beforeunload", e => { if (S.job) { e.preventDefault(); e.returnValue = ""; } });
+$("csv").addEventListener("click", downloadCSV);
+$("checkmore").addEventListener("click", () => {
+  const next = view().filter(it => !isChecked(it)).slice(0, 100);
+  if (!next.length) return status("Everything in this view is already checked.");
+  runJob(async signal => { await deepCheck(next, signal, "Checking 100 more"); status("Done.", 1); });
+});
+$("infoall").addEventListener("click", () => {
+  if ($("infoall").dataset.done) return;
+  const todo = view().filter(it => !it.inf);
+  const byRid = new Map(); for (const it of S.items) (byRid.get(it.rid) || byRid.set(it.rid, []).get(it.rid)).push(it);
+  runJob(async signal => {
+    let last = 0;
+    for (let k = 0; k < todo.length; k++) {
+      if (todo[k].inf) continue;
+      status(`Looking up genre & country: ${k + 1} of ${todo.length.toLocaleString()} · ${mins(todo.length - k)} left (keep this tab open; you can stop and resume any time)`, k / todo.length);
+      await lookupRelease(todo[k], signal);
+      for (const x of byRid.get(todo[k].rid) || []) apply(x);
+      if (Date.now() - last > 2000) { render(); last = Date.now(); }
+    }
+    status("Genre & country filled in.", 1);
+  });
+});
+$("token").value = ls.get("discogs_token");
+$("token").addEventListener("change", () => ls.set("discogs_token", $("token").value.trim()));
+$("deepn").value = ls.get("deep_n") || 100;
+$("deepn").addEventListener("change", () => ls.set("deep_n", $("deepn").value));
+document.addEventListener("click", e => {
+  const c = e.target.closest("button.chip,th[data-k],tr.m,#more");
+  if (!c || e.target.closest("a")) return;
+  if (c.id === "more") S.limit += 100;
+  else if (c.dataset.t) { S.tog.has(c.dataset.t) ? S.tog.delete(c.dataset.t) : S.tog.add(c.dataset.t); S.limit = 100; }
+  else if (c.dataset.more) S.showAll[c.dataset.more] = !S.showAll[c.dataset.more];
+  else if (c.dataset.g) { const s = S.sel[c.dataset.g], v = c.dataset.v; s.has(v) ? s.delete(v) : s.add(v); S.limit = 100; }
+  else if (c.dataset.k) { const k = c.dataset.k; if (S.sortK === k) S.sortD = -S.sortD; else { S.sortK = k; S.sortD = (k === "a" || k === "t") ? 1 : -1; } }
+  else if (c.classList.contains("m")) { const i = +c.dataset.i; S.open.has(i) ? S.open.delete(i) : S.open.add(i); }
+  render();
+});
+loadCaches().then(() => {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (h) { $("url").value = h; start(false); }   // links like objectcogs/#https://www.discogs.com/seller/x/profile?format=CD start right away
+});
+</script>
+</body>
+</html>
